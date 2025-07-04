@@ -1,10 +1,9 @@
 import { IsString, IsOptional, IsEnum, IsArray, IsObject, MinLength, MaxLength } from 'class-validator';
 
 export class CreateLogEntryDto {
-  @IsEnum(['work', 'personal', 'health', 'learning', 'childcare', 'finance', 'exercise', 'social'], { 
-    message: '日志类型必须是 work、personal、health、learning、childcare、finance、exercise 或 social' 
-  })
-  type: 'work' | 'personal' | 'health' | 'learning' | 'childcare' | 'finance' | 'exercise' | 'social';
+  @IsOptional()
+  @IsString({ message: '日志类型必须是字符串' })
+  type?: string;
 
   @IsString({ message: '日志内容不能为空' })
   @MinLength(1, { message: '日志内容至少需要1个字符' })
@@ -106,7 +105,7 @@ export class UpdateLogEntryDto {
 
 export class LogEntryResponseDto {
   id: string;
-  type: 'work' | 'personal' | 'health' | 'learning' | 'childcare' | 'finance' | 'exercise' | 'social';
+  type: string;
   content: string;
   metadata?: Record<string, any>;
   tags?: string[];

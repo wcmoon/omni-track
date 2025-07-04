@@ -51,6 +51,7 @@ export class AuthController {
   @UseGuards(AuthGuard('jwt'))
   @Get('profile')
   getProfile(@Request() req) {
+    console.log('Profile request user:', req.user);
     return {
       success: true,
       data: req.user,
@@ -62,6 +63,40 @@ export class AuthController {
     return {
       success: true,
       message: '退出登录成功',
+    };
+  }
+
+  // 测试用户快速注册（仅用于开发环境）
+  @Post('quick-register')
+  async quickRegister(@Body() body: { email: string; password: string; name: string }) {
+    // 直接创建用户，跳过验证码
+    const result = await this.authService.quickRegister(body.name, body.email, body.password);
+    return {
+      success: true,
+      message: '快速注册成功',
+      data: result,
+    };
+  }
+
+  // 测试端点 - 检查JWT
+  @Get('test-jwt')
+  testJwt(@Request() req) {
+    console.log('Headers:', req.headers);
+    console.log('Authorization:', req.headers.authorization);
+    return {
+      success: true,
+      message: '无认证测试成功',
+      headers: req.headers,
+    };
+  }
+
+  // 调试端点 - 查看所有用户
+  @Get('debug-users')
+  async debugUsers() {
+    const users = await this.authService.getAllUsers();
+    return {
+      success: true,
+      data: users.map(u => ({ id: u.id, email: u.email, name: u.name })),
     };
   }
 }

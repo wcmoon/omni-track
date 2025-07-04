@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { LogEntry } from '../../database/entities/log-entry.entity';
 import { CreateLogEntryDto, UpdateLogEntryDto, LogEntryResponseDto } from './dto/log.dto';
+import { SmartLogDto } from './dto/smart-log.dto';
+import { AIService } from '../ai/ai.service';
 
 @Injectable()
 export class LogService {
   private logEntries: LogEntry[] = []; // 临时存储，后续会替换为数据库
+
+  constructor(private readonly aiService: AIService) {}
 
   async create(createLogEntryDto: CreateLogEntryDto, userId: string): Promise<LogEntryResponseDto> {
     const logEntry: LogEntry = {
@@ -199,5 +203,50 @@ export class LogService {
       createdAt: logEntry.createdAt,
       updatedAt: logEntry.updatedAt,
     };
+  }
+
+  async analyzeLogContent(content: string): Promise<any> {
+    return await this.aiService.analyzeLogContent(content);
+  }
+
+  async createSmartLog(smartLogDto: SmartLogDto, userId: string): Promise<{
+    log: LogEntryResponseDto;
+    analysis: any;
+  }> {
+    // 首先分析日志内容
+    const analysis = await this.aiService.analyzeLogContent(smartLogDto.content);
+
+    // 创建增强的日志条目
+    const createLogDto: CreateLogEntryDto = {
+      type: smartLogDto.type || analysis.suggestedType,
+      content: smartLogDto.content,
+      tags: [
+        ...(smartLogDto.tags || []),
+        ...analysis.suggestedTags,
+      ],
+      metadata: {
+        aiAnalysis: analysis,
+        keyPoints: analysis.keyPoints,
+        summary: analysis.summary,
+      },
+    };
+
+    const logEntry = await this.create(createLogDto, userId);
+
+    return {
+      log: logEntry,
+      analysis,
+    };
+  }
+
+  async getLogTypes(userId: string): Promise<string[]> {
+    const userLogs = this.logEntries.filter(entry => entry.userId === userId);
+    const types = [...new Set(userLogs.map(log => log.type))];
+    
+    // 默认类型
+    const defaultTypes = ['工作', '学习', '生活', '健康', '娱乐', '社交'];
+    
+    // 合并并去重
+    return [...new Set([...defaultTypes, ...types])];
   }
 }

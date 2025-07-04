@@ -1,4 +1,6 @@
 import { Injectable, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { EmailService } from './email.service';
@@ -13,9 +15,10 @@ interface VerificationCode {
 @Injectable()
 export class AuthService {
   private verificationCodes = new Map<string, VerificationCode>();
-  private users: User[] = []; // 临时存储，后续会替换为数据库
 
   constructor(
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
     private jwtService: JwtService,
     private emailService: EmailService,
   ) {
@@ -24,18 +27,28 @@ export class AuthService {
   }
 
   async validateUser(email: string, password: string): Promise<any> {
-    const user = this.users.find(u => u.email === email);
-    if (user && await bcrypt.compare(password, user.password)) {
-      const { password, ...result } = user;
-      return result;
+    console.log('Validating user:', email, 'with password:', password);
+    const user = await this.userRepository.findOne({ where: { email } });
+    console.log('Found user:', user ? { id: user.id, email: user.email, hasPassword: !!user.password } : 'null');
+    
+    if (user) {
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      console.log('Password match:', passwordMatch);
+      if (passwordMatch) {
+        const { password, ...result } = user;
+        return result;
+      }
     }
     return null;
   }
 
   async login(user: any) {
     const payload = { email: user.email, sub: user.id };
+    const token = this.jwtService.sign(payload);
+    console.log('Signing JWT token with payload:', payload);
+    console.log('Generated token:', token);
     return {
-      access_token: this.jwtService.sign(payload),
+      access_token: token,
       user: {
         id: user.id,
         name: user.name,
@@ -47,7 +60,7 @@ export class AuthService {
 
   async sendVerificationCode(email: string): Promise<{ success: boolean; message: string }> {
     // 检查邮箱是否已注册
-    const existingUser = this.users.find(u => u.email === email);
+    const existingUser = await this.userRepository.findOne({ where: { email } });
     if (existingUser) {
       throw new ConflictException('该邮箱已被注册');
     }
@@ -100,7 +113,7 @@ export class AuthService {
     await this.verifyCode(email, verificationCode);
 
     // 检查邮箱是否已注册
-    const existingUser = this.users.find(u => u.email === email);
+    const existingUser = await this.userRepository.findOne({ where: { email } });
     if (existingUser) {
       throw new ConflictException('该邮箱已被注册');
     }
@@ -109,30 +122,60 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(password, 12);
 
     // 创建用户
-    const newUser: User = {
-      id: Date.now().toString(), // 临时ID生成方式
+    const newUser = this.userRepository.create({
       name,
       email,
       password: hashedPassword,
       subscriptionTier: 'free',
       maxProjects: 3,
       maxLogEntries: 100,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    this.users.push(newUser);
+    const savedUser = await this.userRepository.save(newUser);
 
     // 清除验证码
     this.verificationCodes.delete(email);
 
     // 生成JWT令牌
-    const { password: _, ...userWithoutPassword } = newUser;
+    const { password: _, ...userWithoutPassword } = savedUser;
     return this.login(userWithoutPassword);
   }
 
   async findUserById(id: string): Promise<User | undefined> {
-    return this.users.find(user => user.id === id);
+    return await this.userRepository.findOne({ where: { id } });
+  }
+
+  // 调试方法 - 获取所有用户
+  async getAllUsers(): Promise<User[]> {
+    return await this.userRepository.find();
+  }
+
+  // 快速注册（跳过验证码，仅用于测试）
+  async quickRegister(name: string, email: string, password: string): Promise<any> {
+    // 检查邮箱是否已注册
+    const existingUser = await this.userRepository.findOne({ where: { email } });
+    if (existingUser) {
+      throw new ConflictException('该邮箱已被注册');
+    }
+
+    // 加密密码
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // 创建用户
+    const newUser = this.userRepository.create({
+      name,
+      email,
+      password: hashedPassword,
+      subscriptionTier: 'free',
+      maxProjects: 3,
+      maxLogEntries: 100,
+    });
+
+    const savedUser = await this.userRepository.save(newUser);
+
+    // 生成JWT令牌
+    const { password: _, ...userWithoutPassword } = savedUser;
+    return this.login(userWithoutPassword);
   }
 
   // 清理过期的验证码

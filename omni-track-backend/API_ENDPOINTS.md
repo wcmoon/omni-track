@@ -174,6 +174,50 @@ GET /api/tasks/:id/subtasks
 Authorization: Bearer <token>
 ```
 
+### 9. 智能创建任务
+```http
+POST /api/tasks/smart-create
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "开发用户登录功能",
+  "description": "实现用户登录功能，包括验证码验证",
+  "dueDate": "2025-01-20T10:00:00Z",
+  "projectId": "project-id",
+  "useSmartSuggestions": true,
+  "autoBreakdown": true
+}
+```
+
+### 10. 批量创建任务
+```http
+POST /api/tasks/batch-create
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "tasks": [
+    {
+      "title": "设计登录界面",
+      "description": "设计用户友好的登录界面"
+    },
+    {
+      "title": "实现登录API",
+      "description": "后端登录接口开发"
+    }
+  ],
+  "projectId": "project-id",
+  "useSmartSuggestions": true
+}
+```
+
+### 11. 自动分解任务
+```http
+POST /api/tasks/:id/auto-breakdown
+Authorization: Bearer <token>
+```
+
 ## 日志管理 API
 
 ### 1. 创建日志条目
@@ -243,6 +287,125 @@ Content-Type: application/json
 ### 8. 删除日志条目
 ```http
 DELETE /api/logs/:id
+Authorization: Bearer <token>
+```
+
+### 9. 智能创建日志条目
+```http
+POST /api/logs/smart-create
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "type": "work",
+  "content": "今天完成了项目的核心功能开发，遇到了一些技术难题但最终解决了",
+  "mood": "good",
+  "energy": "medium",
+  "location": "办公室",
+  "weather": "晴天"
+}
+```
+
+## 智能Todo系统 API
+
+### 1. 分析任务
+```http
+POST /api/smart-todo/analyze
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "开发用户管理系统",
+  "description": "实现用户注册、登录、权限管理等功能",
+  "dueDate": "2025-01-15T10:00:00Z"
+}
+```
+
+### 2. 任务分解建议
+```http
+POST /api/smart-todo/breakdown
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "title": "设计移动端应用",
+  "description": "设计一款用户友好的移动端应用"
+}
+```
+
+### 3. 获取智能提醒
+```http
+GET /api/smart-todo/reminders
+Authorization: Bearer <token>
+```
+
+### 4. 获取工作流程建议
+```http
+GET /api/smart-todo/workflow-suggestions
+Authorization: Bearer <token>
+```
+
+### 5. 智能仪表盘
+```http
+GET /api/smart-todo/dashboard
+Authorization: Bearer <token>
+```
+
+## 智能日志系统 API
+
+### 1. 智能标签建议
+```http
+POST /api/smart-log/suggest-tags
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "content": "今天参加了团队会议，讨论了新项目的技术架构",
+  "type": "work"
+}
+```
+
+### 2. 内容智能增强
+```http
+POST /api/smart-log/enhance-content
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "content": "完成了用户界面设计",
+  "type": "work",
+  "mood": "good",
+  "energy": "high"
+}
+```
+
+### 3. 生成日志洞察
+```http
+GET /api/smart-log/insights?days=30
+Authorization: Bearer <token>
+```
+
+### 4. 行为模式分析
+```http
+GET /api/smart-log/patterns?days=90
+Authorization: Bearer <token>
+```
+
+### 5. 生活质量评分
+```http
+GET /api/smart-log/life-quality-score?days=30
+Authorization: Bearer <token>
+```
+
+### 6. 智能日志仪表盘
+```http
+GET /api/smart-log/dashboard
+Authorization: Bearer <token>
+```
+
+### 7. 月度报告
+```http
+GET /api/smart-log/monthly-report
 Authorization: Bearer <token>
 ```
 

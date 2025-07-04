@@ -1,6 +1,6 @@
 export class LogEntry {
   id!: string;
-  type!: 'work' | 'personal' | 'health' | 'learning' | 'childcare' | 'finance' | 'exercise' | 'social';
+  type!: string;
   content!: string;
   metadata?: Record<string, any>;
   tags?: string[];
