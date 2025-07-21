@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bull';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
@@ -9,7 +10,10 @@ import { TaskModule } from './modules/task/task.module';
 import { LogModule } from './modules/log/log.module';
 import { SmartTodoModule } from './modules/smart-todo/smart-todo.module';
 import { AIModule } from './modules/ai/ai.module';
-import { User } from './database/entities/user.entity';
+import { WebSocketModule } from './modules/websocket/websocket.module';
+// import { AnalysisQueueModule } from './modules/analysis-queue/analysis-queue.module';
+import { getDatabaseConfig } from './config/database.config';
+import { getRedisConfig } from './config/redis.config';
 
 @Module({
   imports: [
@@ -17,12 +21,13 @@ import { User } from './database/entities/user.entity';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      url: process.env.DATABASE_URL,
-      entities: [User],
-      synchronize: true, // 开发环境使用，生产环境应设为false
-      logging: true,
+    TypeOrmModule.forRootAsync({
+      useFactory: (configService: ConfigService) => getDatabaseConfig(configService),
+      inject: [ConfigService],
+    }),
+    BullModule.forRootAsync({
+      useFactory: (configService: ConfigService) => getRedisConfig(configService),
+      inject: [ConfigService],
     }),
     AuthModule,
     ProjectModule,
@@ -30,6 +35,8 @@ import { User } from './database/entities/user.entity';
     LogModule,
     SmartTodoModule,
     AIModule,
+    WebSocketModule,
+    // AnalysisQueueModule,
   ],
   controllers: [AppController],
   providers: [AppService],

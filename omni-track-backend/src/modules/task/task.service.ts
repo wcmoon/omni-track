@@ -3,19 +3,23 @@ import { Task } from '../../database/entities/task.entity';
 import { CreateTaskDto, UpdateTaskDto, TaskResponseDto } from './dto/task.dto';
 import { SmartCreateTaskDto, BatchCreateTaskDto, AITaskAnalysisDto } from './dto/smart-task.dto';
 import { AIService } from '../ai/ai.service';
+import { TaskWebSocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class TaskService {
   private tasks: Task[] = []; // 临时存储，后续会替换为数据库
 
-  constructor(private readonly aiService: AIService) {}
+  constructor(
+    private readonly aiService: AIService,
+    private readonly wsGateway: TaskWebSocketGateway,
+  ) {}
 
   async create(createTaskDto: CreateTaskDto, userId: string): Promise<TaskResponseDto> {
     const task: Task = {
       id: Date.now().toString(),
       title: createTaskDto.title,
       description: createTaskDto.description,
-      priority: createTaskDto.priority,
+      priority: createTaskDto.priority || 'medium',
       status: 'pending',
       dueDate: createTaskDto.dueDate ? new Date(createTaskDto.dueDate) : undefined,
       estimatedDuration: createTaskDto.estimatedDuration,
@@ -29,7 +33,51 @@ export class TaskService {
     };
 
     this.tasks.push(task);
+    
+    // 异步AI分析（不阻塞返回，且只对未完成任务进行）
+    if (task.status !== 'completed') {
+      this.performAsyncAIAnalysis(task.id, createTaskDto.description, userId);
+    }
+    
     return this.toResponseDto(task);
+  }
+
+  private async performAsyncAIAnalysis(taskId: string, description: string, userId: string): Promise<void> {
+    try {
+      console.log(`🤖 开始异步AI分析任务: ${taskId}`);
+      const analysis = await this.aiService.analyzeTaskDescription(description);
+      
+      // 更新任务的AI分析结果（只更新未完成的任务）
+      const taskIndex = this.tasks.findIndex(t => t.id === taskId);
+      if (taskIndex !== -1 && this.tasks[taskIndex].status !== 'completed') {
+        // 合并标签并去重
+        const mergedTags = [...new Set([...(this.tasks[taskIndex].tags || []), ...(analysis.suggestedTags || [])])];
+        
+        this.tasks[taskIndex] = {
+          ...this.tasks[taskIndex],
+          estimatedDuration: analysis.estimatedTime || this.tasks[taskIndex].estimatedDuration,
+          priority: analysis.suggestedPriority || this.tasks[taskIndex].priority,
+          tags: mergedTags,
+          aiContext: `AI分析：优先级 ${analysis.suggestedPriority}，预估时间 ${analysis.estimatedTime}分钟`,
+          aiGenerated: true,
+          updatedAt: new Date(),
+        };
+        console.log(`✅ 任务 ${taskId} AI分析完成`);
+        
+        // 发送WebSocket通知
+        this.wsGateway.notifyTaskAnalysisComplete(userId, taskId, {
+          estimatedDuration: analysis.estimatedTime,
+          priority: analysis.suggestedPriority,
+          tags: mergedTags,
+          aiContext: `AI分析：优先级 ${analysis.suggestedPriority}，预估时间 ${analysis.estimatedTime}分钟`,
+          aiGenerated: true,
+        });
+      } else if (taskIndex !== -1 && this.tasks[taskIndex].status === 'completed') {
+        console.log(`⚠️ 任务 ${taskId} 已完成，跳过AI分析结果更新`);
+      }
+    } catch (error) {
+      console.error(`❌ 任务 ${taskId} AI分析失败:`, error);
+    }
   }
 
   async findAll(userId: string, projectId?: string): Promise<TaskResponseDto[]> {

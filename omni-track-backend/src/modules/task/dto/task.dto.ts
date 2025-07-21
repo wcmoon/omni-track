@@ -1,18 +1,20 @@
 import { IsString, IsOptional, IsEnum, IsBoolean, IsDateString, IsNumber, IsArray, MinLength, MaxLength } from 'class-validator';
 
 export class CreateTaskDto {
-  @IsString({ message: '任务标题不能为空' })
+  @IsOptional()
+  @IsString({ message: '任务标题必须是字符串' })
   @MinLength(1, { message: '任务标题至少需要1个字符' })
   @MaxLength(200, { message: '任务标题不能超过200个字符' })
-  title: string;
+  title?: string;
+
+  @IsString({ message: '任务描述不能为空' })
+  @MinLength(1, { message: '任务描述至少需要1个字符' })
+  @MaxLength(1000, { message: '任务描述不能超过1000个字符' })
+  description: string;
 
   @IsOptional()
-  @IsString({ message: '任务描述必须是字符串' })
-  @MaxLength(1000, { message: '任务描述不能超过1000个字符' })
-  description?: string;
-
   @IsEnum(['low', 'medium', 'high'], { message: '优先级必须是 low、medium 或 high' })
-  priority: 'low' | 'medium' | 'high';
+  priority?: 'low' | 'medium' | 'high';
 
   @IsOptional()
   @IsDateString({}, { message: '截止日期格式不正确' })

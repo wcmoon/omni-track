@@ -70,12 +70,13 @@ export class TaskController {
     };
   }
 
-  @Get(':id')
-  async findOne(@Param('id') id: string, @Request() req) {
+  @Patch(':id/complete')
+  async completeTask(@Param('id') id: string, @Request() req) {
     const userId = req.user?.id || '1751615073420';
-    const result = await this.taskService.findOne(id, userId);
+    const result = await this.taskService.update(id, { status: 'completed' }, userId);
     return {
       success: true,
+      message: '任务已完成',
       data: result,
     };
   }
@@ -84,6 +85,16 @@ export class TaskController {
   async findSubTasks(@Param('id') id: string, @Request() req) {
     const userId = req.user?.id || '1751615073420';
     const result = await this.taskService.findSubTasks(id, userId);
+    return {
+      success: true,
+      data: result,
+    };
+  }
+
+  @Get(':id')
+  async findOne(@Param('id') id: string, @Request() req) {
+    const userId = req.user?.id || '1751615073420';
+    const result = await this.taskService.findOne(id, userId);
     return {
       success: true,
       data: result,

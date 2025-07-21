@@ -37,32 +37,28 @@ export class AIService {
   }
 
   async analyzeTaskDescription(description: string): Promise<AITaskAnalysisDto> {
-    try {
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
       const prompt = `分析以下任务描述，并返回JSON格式的分析结果：
 描述："${description}"
 
-请提供：
-1. suggestedTitle: 建议的任务标题
-2. suggestedPriority: 建议的优先级（low/medium/high）
-3. suggestedTags: 建议的标签数组
-4. estimatedTime: 预估时间（分钟）
-5. suggestedProject: 建议的项目信息
-6. breakdown: 任务分解建议
-7. dependencies: 可能的依赖项
+要求：
+1. 只返回JSON对象，不要包含任何其他文字说明
+2. 不要使用markdown代码块标记
+3. 直接返回JSON对象
 
-返回格式：
-{
-  "suggestedTitle": "任务标题",
-  "suggestedPriority": "medium",
-  "suggestedTags": ["标签1", "标签2"],
-  "estimatedTime": 60,
-  "suggestedProject": {
-    "name": "项目名称",
-    "isNew": true
-  },
-  "breakdown": ["步骤1", "步骤2"],
-  "dependencies": ["依赖1", "依赖2"]
-}`;
+请提供以下字段的JSON对象：
+- suggestedTitle: 建议的任务标题（字符串）
+- suggestedPriority: 建议的优先级（只能是"low"、"medium"或"high"）
+- suggestedTags: 建议的标签数组（字符串数组，最多5个）
+- estimatedTime: 预估时间（数字，单位：分钟）
+- breakdown: 任务分解建议（字符串数组，可选）
+
+示例输出格式：
+{"suggestedTitle":"任务标题","suggestedPriority":"medium","suggestedTags":["标签1","标签2"],"estimatedTime":60,"breakdown":["步骤1","步骤2"]}`;
 
       const response = await this.openai.chat.completions.create({
         model: 'deepseek-r1',
@@ -75,28 +71,73 @@ export class AIService {
         throw new Error('AI响应为空');
       }
 
-      const result = JSON.parse(content);
-      return {
-        suggestedTitle: result.suggestedTitle || '新任务',
-        suggestedPriority: result.suggestedPriority || 'medium',
-        suggestedTags: result.suggestedTags || [],
-        estimatedTime: result.estimatedTime || 30,
-        suggestedProject: result.suggestedProject,
-        breakdown: result.breakdown || [],
-        dependencies: result.dependencies || [],
-      };
-    } catch (error) {
-      console.error('AI分析失败:', error);
-      // 返回默认值
-      return {
-        suggestedTitle: '新任务',
-        suggestedPriority: 'medium',
-        suggestedTags: [],
-        estimatedTime: 30,
-        breakdown: [],
-        dependencies: [],
-      };
+      // 清理AI响应中可能包含的额外内容
+      console.log('AI原始响应:', content);
+      
+      // 尝试提取JSON内容
+      let jsonContent = content;
+      
+      // 方法1: 查找JSON代码块
+      const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonContent = jsonMatch[1];
+      } else {
+        // 方法2: 查找第一个{和最后一个}之间的内容
+        const startIndex = content.indexOf('{');
+        const endIndex = content.lastIndexOf('}');
+        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+          jsonContent = content.substring(startIndex, endIndex + 1);
+        }
+      }
+      
+      // 清理可能的额外字符
+      jsonContent = jsonContent
+        .replace(/^[^{]*/, '')  // 移除开头非JSON字符
+        .replace(/[^}]*$/, '')  // 移除结尾非JSON字符
+        .trim();
+      
+      console.log('清理后的JSON:', jsonContent);
+      
+      const result = JSON.parse(jsonContent);
+        return {
+          suggestedTitle: result.suggestedTitle || '新任务',
+          suggestedPriority: result.suggestedPriority || 'medium',
+          suggestedTags: result.suggestedTags || [],
+          estimatedTime: result.estimatedTime || 30,
+          suggestedProject: result.suggestedProject,
+          breakdown: result.breakdown || [],
+          dependencies: result.dependencies || [],
+        };
+      } catch (error) {
+        retryCount++;
+        console.error(`AI分析失败 (尝试 ${retryCount}/${maxRetries}):`, error);
+        
+        if (retryCount >= maxRetries) {
+          // 返回默认值
+          return {
+            suggestedTitle: '新任务',
+            suggestedPriority: 'medium',
+            suggestedTags: [],
+            estimatedTime: 30,
+            breakdown: [],
+            dependencies: [],
+          };
+        }
+        
+        // 等待后重试
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+      }
     }
+    
+    // 不应该到达这里，但为了类型安全
+    return {
+      suggestedTitle: '新任务',
+      suggestedPriority: 'medium',
+      suggestedTags: [],
+      estimatedTime: 30,
+      breakdown: [],
+      dependencies: [],
+    };
   }
 
   async analyzeLogContent(content: string): Promise<{

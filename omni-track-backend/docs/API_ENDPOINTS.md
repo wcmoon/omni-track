@@ -162,19 +162,25 @@ Content-Type: application/json
 }
 ```
 
-### 7. 删除任务
+### 7. 完成任务（快捷接口）
+```http
+PATCH /api/tasks/:id/complete
+Authorization: Bearer <token>
+```
+
+### 8. 删除任务
 ```http
 DELETE /api/tasks/:id
 Authorization: Bearer <token>
 ```
 
-### 8. 获取子任务
+### 9. 获取子任务
 ```http
 GET /api/tasks/:id/subtasks
 Authorization: Bearer <token>
 ```
 
-### 9. 智能创建任务
+### 10. 智能创建任务
 ```http
 POST /api/tasks/smart-create
 Authorization: Bearer <token>
@@ -190,7 +196,7 @@ Content-Type: application/json
 }
 ```
 
-### 10. 批量创建任务
+### 11. 批量创建任务
 ```http
 POST /api/tasks/batch-create
 Authorization: Bearer <token>
@@ -212,7 +218,7 @@ Content-Type: application/json
 }
 ```
 
-### 11. 自动分解任务
+### 12. 自动分解任务
 ```http
 POST /api/tasks/:id/auto-breakdown
 Authorization: Bearer <token>
