@@ -80,43 +80,63 @@ export class AIService {
 
         console.log('🔗 调用DeepSeek API...');
         const apiStartTime = Date.now();
-        const response = await this.openai.chat.completions.create({
-          model: 'deepseek-r1',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.3, // 降低温度以获得更一致的结果
-          max_tokens: 150, // 限制输出长度以提升速度
-        });
-        console.log(`✅ DeepSeek API响应，耗时: ${Date.now() - apiStartTime}ms`);
-
-        const content = response.choices[0]?.message?.content;
-        console.log('📝 AI原始响应:', content);
-        if (!content) {
-          throw new Error('AI响应为空');
-        }
-
-        // 简化JSON提取逻辑
-        let jsonContent = content.trim();
-        const startIndex = jsonContent.indexOf('{');
-        const endIndex = jsonContent.lastIndexOf('}');
         
-        if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-          jsonContent = jsonContent.substring(startIndex, endIndex + 1);
-        }
+        // 添加超时控制
+        const timeout = 10000; // 10秒超时
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
         
-        console.log('🔧 提取的JSON:', jsonContent);
-        const result = JSON.parse(jsonContent);
-        console.log('📊 解析结果:', result);
-        return {
-          suggestedTitle: result.suggestedTitle || description.slice(0, 20),
-          suggestedPriority: result.suggestedPriority || 'medium',
-          suggestedTags: result.suggestedTags || [],
-          estimatedTime: result.estimatedTime || this.estimateTimeByKeywords(description),
-          suggestedDueDate: result.suggestedDueDate || undefined,
-          suggestedEndTime: result.suggestedEndTime || undefined,
-          timeExpression: result.timeExpression || undefined,
-          breakdown: [],
-          dependencies: [],
-        };
+        try {
+          const response = await this.openai.chat.completions.create({
+            model: 'deepseek-r1',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.3, // 降低温度以获得更一致的结果
+            max_tokens: 150, // 限制输出长度以提升速度
+          }, {
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+          console.log(`✅ DeepSeek API响应，耗时: ${Date.now() - apiStartTime}ms`);
+          
+          const content = response.choices[0]?.message?.content;
+          console.log('📝 AI原始响应:', content);
+          if (!content) {
+            throw new Error('AI响应为空');
+          }
+
+          // 简化JSON提取逻辑
+          let jsonContent = content.trim();
+          const startIndex = jsonContent.indexOf('{');
+          const endIndex = jsonContent.lastIndexOf('}');
+          
+          if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+            jsonContent = jsonContent.substring(startIndex, endIndex + 1);
+          }
+          
+          console.log('🔧 提取的JSON:', jsonContent);
+          const result = JSON.parse(jsonContent);
+          console.log('📊 解析结果:', result);
+          
+          return {
+            suggestedTitle: result.suggestedTitle || description.slice(0, 20),
+            suggestedPriority: result.suggestedPriority || 'medium',
+            suggestedTags: result.suggestedTags || [],
+            estimatedTime: result.estimatedTime || this.estimateTimeByKeywords(description),
+            suggestedDueDate: result.suggestedDueDate || undefined,
+            suggestedEndTime: result.suggestedEndTime || undefined,
+            timeExpression: result.timeExpression || undefined,
+            breakdown: [],
+            dependencies: [],
+          };
+        } catch (apiError) {
+          clearTimeout(timeoutId);
+          if (apiError.name === 'AbortError') {
+            console.log('⏰ DeepSeek API超时');
+          } else {
+            console.error('🔥 DeepSeek API调用失败:', apiError);
+          }
+          throw apiError;
+        }
       } catch (error) {
         retryCount++;
         console.error(`AI时间分析失败 (尝试 ${retryCount}/${maxRetries}):`, error);

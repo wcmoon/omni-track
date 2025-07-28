@@ -262,20 +262,21 @@ export class TaskService {
   }> {
     console.log(`🚀 开始智能创建任务: ${smartCreateTaskDto.description}`);
     
-    // 首先进行AI分析，包括时间识别
-    console.log('⏳ 开始AI分析...');
-    const startTime = Date.now();
-    const aiAnalysis = await this.aiService.analyzeTaskDescription(smartCreateTaskDto.description);
-    console.log(`✅ AI分析完成，耗时: ${Date.now() - startTime}ms`);
+    // 先使用关键词快速识别时间，不等待AI分析
+    const quickTimeAnalysis = {
+      suggestedDueDate: this.extractDateByKeywords(smartCreateTaskDto.description),
+      suggestedEndTime: this.extractTimeByKeywords(smartCreateTaskDto.description),
+    };
+    console.log('⚡ 快速时间识别结果:', quickTimeAnalysis);
     
-    // 合并用户输入的时间和AI识别的时间
+    // 合并用户输入的时间和快速识别的时间
     let finalDueDate = smartCreateTaskDto.dueDate;
     let finalEndTime: string | undefined;
     
-    // 如果用户没有提供时间，但AI识别到了时间，则使用AI识别的时间
-    if (!smartCreateTaskDto.dueDate && aiAnalysis.suggestedDueDate) {
-      finalDueDate = aiAnalysis.suggestedDueDate;
-      finalEndTime = aiAnalysis.suggestedEndTime;
+    // 如果用户没有提供时间，但快速识别到了时间，则使用快速识别的时间
+    if (!smartCreateTaskDto.dueDate && quickTimeAnalysis.suggestedDueDate) {
+      finalDueDate = quickTimeAnalysis.suggestedDueDate;
+      finalEndTime = quickTimeAnalysis.suggestedEndTime;
     }
     
     // 导入 SmartTodoService (为了避免循环依赖，这里使用简化的智能逻辑)
@@ -285,17 +286,17 @@ export class TaskService {
       finalDueDate ? new Date(finalDueDate) : undefined
     );
 
-    // 创建主任务，应用智能建议
+    // 创建主任务，应用快速建议
     const taskData: CreateTaskDto = {
-      title: smartCreateTaskDto.title || aiAnalysis.suggestedTitle,
+      title: smartCreateTaskDto.title || smartCreateTaskDto.description.slice(0, 20),
       description: smartCreateTaskDto.description,
-      priority: smartCreateTaskDto.useSmartSuggestions !== false ? aiAnalysis.suggestedPriority : 'medium',
+      priority: smartCreateTaskDto.useSmartSuggestions !== false ? suggestions.suggestedPriority : 'medium',
       dueDate: finalDueDate,
       endTime: finalEndTime, // 添加具体时间
-      estimatedDuration: smartCreateTaskDto.useSmartSuggestions !== false ? aiAnalysis.estimatedTime : undefined,
+      estimatedDuration: smartCreateTaskDto.useSmartSuggestions !== false ? suggestions.estimatedDuration : undefined,
       projectId: smartCreateTaskDto.projectId,
       parentTaskId: undefined,
-      tags: smartCreateTaskDto.useSmartSuggestions !== false ? [...new Set([...(smartCreateTaskDto.tags || []), ...aiAnalysis.suggestedTags])] : [],
+      tags: smartCreateTaskDto.useSmartSuggestions !== false ? [...new Set([...(smartCreateTaskDto.tags || []), ...suggestions.tags])] : [],
     };
 
     const mainTask = await this.create(taskData, userId);
@@ -318,6 +319,12 @@ export class TaskService {
         }, userId);
         subtasks.push(subtask);
       }
+    }
+
+    // 异步AI分析（不阻塞返回）
+    if (smartCreateTaskDto.useSmartSuggestions !== false) {
+      console.log('🔄 启动异步AI分析...');
+      this.performAsyncAIAnalysis(mainTask.id, smartCreateTaskDto.description, userId);
     }
 
     return {
@@ -656,5 +663,93 @@ export class TaskService {
     }
 
     return projectsSummary;
+  }
+
+  // 快速时间识别方法（不依赖AI API）
+  private extractDateByKeywords(description: string): string | undefined {
+    const desc = description.toLowerCase();
+    const now = new Date();
+    
+    // 相对时间表达的识别
+    if (desc.includes('今天') || desc.includes('今日')) {
+      return now.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('明天')) {
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return tomorrow.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('后天')) {
+      const dayAfterTomorrow = new Date(now);
+      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+      return dayAfterTomorrow.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('昨天')) {
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return yesterday.toISOString().split('T')[0];
+    }
+    
+    return undefined;
+  }
+  
+  private extractTimeByKeywords(description: string): string | undefined {
+    const desc = description.toLowerCase();
+    
+    // 时间表达的识别
+    const timePatterns = [
+      /(\d{1,2})[：:](\d{2})/,  // 12:30, 12：30
+      /(\d{1,2})点(\d{1,2})?分?/,  // 12点30分, 12点
+      /(上午|下午)(\d{1,2})点?(\d{1,2})?分?/,  // 上午9点, 下午2点30分
+      /(早上|中午|晚上)(\d{1,2})点?(\d{1,2})?分?/,  // 早上8点, 晚上7点30分
+    ];
+    
+    for (const pattern of timePatterns) {
+      const match = desc.match(pattern);
+      if (match) {
+        if (pattern.source.includes('：|:')) {
+          // HH:mm 格式
+          const hour = parseInt(match[1]);
+          const minute = parseInt(match[2]);
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        } else if (pattern.source.includes('上午|下午')) {
+          // 上午/下午格式
+          const period = match[1];
+          let hour = parseInt(match[2]);
+          const minute = match[3] ? parseInt(match[3]) : 0;
+          
+          if (period === '下午' && hour < 12) {
+            hour += 12;
+          } else if (period === '上午' && hour === 12) {
+            hour = 0;
+          }
+          
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        } else if (pattern.source.includes('早上|中午|晚上')) {
+          // 早上/中午/晚上格式
+          const period = match[1];
+          let hour = parseInt(match[2]);
+          const minute = match[3] ? parseInt(match[3]) : 0;
+          
+          if (period === '晚上' && hour < 12) {
+            hour += 12;
+          } else if (period === '中午' && hour === 12) {
+            hour = 12;
+          }
+          
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        } else {
+          // 简单的 X点Y分 格式
+          const hour = parseInt(match[1]);
+          const minute = match[2] ? parseInt(match[2]) : 0;
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        }
+      }
+    }
+    
+    return undefined;
   }
 }
