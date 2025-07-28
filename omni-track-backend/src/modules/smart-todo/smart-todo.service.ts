@@ -332,18 +332,34 @@ export class SmartTodoService {
 
       // 按优先级顺序检查提醒类型，每个任务只产生一个提醒
       // 1. 最高优先级：逾期提醒
-      if (task.dueDate && task.dueDate < now) {
-        reminders.push({
-          taskId: task.id,
-          title: task.title,
-          reminderType: 'overdue' as const,
-          message: `任务 "${task.title}" 已逾期，请尽快完成`,
-          priority: 'high' as const,
-        });
-      }
-      // 2. 中等优先级：即将到期提醒
-      else if (task.dueDate) {
-        const hoursUntilDue = (task.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+      if (task.dueDate) {
+        const taskDueDate = new Date(task.dueDate);
+        let isOverdue = false;
+        
+        if (task.endTime) {
+          // 如果有具体时间，精确比较到分钟
+          const [hours, minutes] = task.endTime.split(':').map(Number);
+          taskDueDate.setHours(hours, minutes, 0, 0);
+          isOverdue = taskDueDate < now;
+        } else {
+          // 如果没有具体时间，认为是当天23:59:59到期
+          taskDueDate.setHours(23, 59, 59, 999);
+          isOverdue = taskDueDate < now;
+        }
+        
+        if (isOverdue) {
+          reminders.push({
+            taskId: task.id,
+            title: task.title,
+            reminderType: 'overdue' as const,
+            message: `任务 "${task.title}" 已逾期，请尽快完成`,
+            priority: 'high' as const,
+          });
+          continue; // 已添加逾期提醒，跳过其他提醒类型
+        }
+        
+        // 2. 中等优先级：即将到期提醒
+        const hoursUntilDue = (taskDueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
         if (hoursUntilDue <= 24 && hoursUntilDue > 0) {
           reminders.push({
             taskId: task.id,
@@ -352,10 +368,11 @@ export class SmartTodoService {
             message: `任务 "${task.title}" 将在 ${Math.round(hoursUntilDue)} 小时后到期`,
             priority: 'medium' as const,
           });
+          continue; // 已添加即将到期提醒，跳过其他提醒类型
         }
       }
       // 3. 较低优先级：建议开始高优先级任务（仅当没有截止日期时）
-      else if (task.priority === 'high' && task.status === 'pending') {
+      if (!task.dueDate && task.priority === 'high' && task.status === 'pending') {
         reminders.push({
           taskId: task.id,
           title: task.title,

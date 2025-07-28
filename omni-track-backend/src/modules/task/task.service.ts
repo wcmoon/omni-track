@@ -204,14 +204,30 @@ export class TaskService {
 
   async findOverdueTasks(userId: string): Promise<TaskResponseDto[]> {
     const now = new Date();
-    const tasks = await this.taskRepository
+    const allTasksWithDueDate = await this.taskRepository
       .createQueryBuilder('task')
       .where('task.userId = :userId', { userId })
-      .andWhere('task.dueDate < :now', { now })
+      .andWhere('task.dueDate IS NOT NULL')
       .andWhere('task.status NOT IN (:...statuses)', { statuses: ['completed', 'cancelled'] })
       .getMany();
+    
+    // 过滤出真正逾期的任务（考虑endTime）
+    const overdueTasks = allTasksWithDueDate.filter(task => {
+      const taskDueDate = new Date(task.dueDate!);
       
-    return tasks.map(t => this.toResponseDto(t));
+      if (task.endTime) {
+        // 如果有具体时间，精确比较到分钟
+        const [hours, minutes] = task.endTime.split(':').map(Number);
+        taskDueDate.setHours(hours, minutes, 0, 0);
+        return taskDueDate < now;
+      } else {
+        // 如果没有具体时间，认为是当天23:59:59到期
+        taskDueDate.setHours(23, 59, 59, 999);
+        return taskDueDate < now;
+      }
+    });
+      
+    return overdueTasks.map(t => this.toResponseDto(t));
   }
 
   async findSubTasks(parentTaskId: string, userId: string): Promise<TaskResponseDto[]> {
@@ -231,19 +247,17 @@ export class TaskService {
   }> {
     const now = new Date();
     
-    const [total, pending, inProgress, completed, cancelled, overdue] = await Promise.all([
+    const [total, pending, inProgress, completed, cancelled] = await Promise.all([
       this.taskRepository.count({ where: { userId } }),
       this.taskRepository.count({ where: { userId, status: 'pending' } }),
       this.taskRepository.count({ where: { userId, status: 'in_progress' } }),
       this.taskRepository.count({ where: { userId, status: 'completed' } }),
       this.taskRepository.count({ where: { userId, status: 'cancelled' } }),
-      this.taskRepository
-        .createQueryBuilder('task')
-        .where('task.userId = :userId', { userId })
-        .andWhere('task.dueDate < :now', { now })
-        .andWhere('task.status NOT IN (:...statuses)', { statuses: ['completed', 'cancelled'] })
-        .getCount()
     ]);
+    
+    // 获取逾期任务数量（使用与findOverdueTasks相同的逻辑）
+    const overdueTasks = await this.findOverdueTasks(userId);
+    const overdue = overdueTasks.length;
     
     return {
       total,
@@ -670,27 +684,34 @@ export class TaskService {
     const desc = description.toLowerCase();
     const now = new Date();
     
-    // 相对时间表达的识别
+    // 本地日期格式化函数
+    const formatLocalDate = (date: Date): string => {
+      return date.getFullYear() + '-' + 
+        String(date.getMonth() + 1).padStart(2, '0') + '-' + 
+        String(date.getDate()).padStart(2, '0');
+    };
+    
+    // 相对时间表达的识别（使用本地时区）
     if (desc.includes('今天') || desc.includes('今日')) {
-      return now.toISOString().split('T')[0];
+      return formatLocalDate(now);
     }
     
     if (desc.includes('明天')) {
       const tomorrow = new Date(now);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      return tomorrow.toISOString().split('T')[0];
+      return formatLocalDate(tomorrow);
     }
     
     if (desc.includes('后天')) {
       const dayAfterTomorrow = new Date(now);
       dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
-      return dayAfterTomorrow.toISOString().split('T')[0];
+      return formatLocalDate(dayAfterTomorrow);
     }
     
     if (desc.includes('昨天')) {
       const yesterday = new Date(now);
       yesterday.setDate(yesterday.getDate() - 1);
-      return yesterday.toISOString().split('T')[0];
+      return formatLocalDate(yesterday);
     }
     
     return undefined;

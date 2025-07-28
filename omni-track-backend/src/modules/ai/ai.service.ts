@@ -43,9 +43,11 @@ export class AIService {
     
     while (retryCount < maxRetries) {
       try {
-        // 获取当前日期时间作为上下文
+        // 获取当前日期时间作为上下文（使用本地时区）
         const now = new Date();
-        const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const currentDate = now.getFullYear() + '-' + 
+          String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+          String(now.getDate()).padStart(2, '0'); // 本地日期 YYYY-MM-DD
         const currentTime = now.toTimeString().split(' ')[0].slice(0, 5); // HH:mm
         const currentWeekday = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
         console.log(`📅 当前时间上下文: ${currentDate} (星期${currentWeekday}) ${currentTime}`);
@@ -227,39 +229,45 @@ export class AIService {
     const desc = description.toLowerCase();
     const now = new Date();
     
-    // 相对时间表达的识别
+    // 相对时间表达的识别（使用本地时区）
+    const formatLocalDate = (date: Date): string => {
+      return date.getFullYear() + '-' + 
+        String(date.getMonth() + 1).padStart(2, '0') + '-' + 
+        String(date.getDate()).padStart(2, '0');
+    };
+    
     if (desc.includes('今天') || desc.includes('今日')) {
-      return now.toISOString().split('T')[0];
+      return formatLocalDate(now);
     }
     
     if (desc.includes('明天')) {
       const tomorrow = new Date(now);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      return tomorrow.toISOString().split('T')[0];
+      return formatLocalDate(tomorrow);
     }
     
     if (desc.includes('后天')) {
       const dayAfterTomorrow = new Date(now);
       dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
-      return dayAfterTomorrow.toISOString().split('T')[0];
+      return formatLocalDate(dayAfterTomorrow);
     }
     
     if (desc.includes('昨天')) {
       const yesterday = new Date(now);
       yesterday.setDate(yesterday.getDate() - 1);
-      return yesterday.toISOString().split('T')[0];
+      return formatLocalDate(yesterday);
     }
     
     if (desc.includes('下周')) {
       const nextWeek = new Date(now);
       nextWeek.setDate(nextWeek.getDate() + 7);
-      return nextWeek.toISOString().split('T')[0];
+      return formatLocalDate(nextWeek);
     }
     
     if (desc.includes('下个月') || desc.includes('下月')) {
       const nextMonth = new Date(now);
       nextMonth.setMonth(nextMonth.getMonth() + 1);
-      return nextMonth.toISOString().split('T')[0];
+      return formatLocalDate(nextMonth);
     }
     
     // 绝对日期识别（简单的模式匹配）
