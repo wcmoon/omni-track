@@ -152,10 +152,10 @@ export class TaskService {
       console.log(`创建任务完成日志: 任务 ${task.id} - ${task.description}`);
       try {
         const logResult = await this.logService.create({
-          content: `完成了任务：${task.description}。感觉很有成就感！`,
+          content: `完成任务：${task.description}`,
           type: '任务完成',
-          tags: ['任务完成', '成就'],
-          mood: 'good' as const,
+          tags: ['任务完成'],
+          mood: 'neutral' as const,
           energy: 'medium' as const,
         }, userId);
         console.log('任务完成日志创建成功:', logResult);
