@@ -260,8 +260,13 @@ export class TaskService {
     suggestions?: any;
     subtasks?: TaskResponseDto[];
   }> {
+    console.log(`🚀 开始智能创建任务: ${smartCreateTaskDto.description}`);
+    
     // 首先进行AI分析，包括时间识别
+    console.log('⏳ 开始AI分析...');
+    const startTime = Date.now();
     const aiAnalysis = await this.aiService.analyzeTaskDescription(smartCreateTaskDto.description);
+    console.log(`✅ AI分析完成，耗时: ${Date.now() - startTime}ms`);
     
     // 合并用户输入的时间和AI识别的时间
     let finalDueDate = smartCreateTaskDto.dueDate;

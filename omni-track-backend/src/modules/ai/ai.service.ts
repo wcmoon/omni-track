@@ -37,6 +37,7 @@ export class AIService {
   }
 
   async analyzeTaskDescription(description: string): Promise<AITaskAnalysisDto> {
+    console.log(`🤖 AI分析任务描述: "${description}"`);
     let retryCount = 0;
     const maxRetries = 2; // 减少重试次数以提升速度
     
@@ -47,6 +48,7 @@ export class AIService {
         const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
         const currentTime = now.toTimeString().split(' ')[0].slice(0, 5); // HH:mm
         const currentWeekday = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
+        console.log(`📅 当前时间上下文: ${currentDate} (星期${currentWeekday}) ${currentTime}`);
         
         // 优化后的时间识别分析提示词
         const prompt = `请分析任务描述中的时间信息并返回JSON：
@@ -76,14 +78,18 @@ export class AIService {
 
 格式：{"estimatedTime":30,"suggestedTitle":"任务","suggestedPriority":"medium","suggestedTags":["标签"],"suggestedDueDate":"YYYY-MM-DD","suggestedEndTime":"HH:mm","timeExpression":"时间表达"}`;
 
+        console.log('🔗 调用DeepSeek API...');
+        const apiStartTime = Date.now();
         const response = await this.openai.chat.completions.create({
           model: 'deepseek-r1',
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.3, // 降低温度以获得更一致的结果
           max_tokens: 150, // 限制输出长度以提升速度
         });
+        console.log(`✅ DeepSeek API响应，耗时: ${Date.now() - apiStartTime}ms`);
 
         const content = response.choices[0]?.message?.content;
+        console.log('📝 AI原始响应:', content);
         if (!content) {
           throw new Error('AI响应为空');
         }
@@ -97,7 +103,9 @@ export class AIService {
           jsonContent = jsonContent.substring(startIndex, endIndex + 1);
         }
         
+        console.log('🔧 提取的JSON:', jsonContent);
         const result = JSON.parse(jsonContent);
+        console.log('📊 解析结果:', result);
         return {
           suggestedTitle: result.suggestedTitle || description.slice(0, 20),
           suggestedPriority: result.suggestedPriority || 'medium',
@@ -114,8 +122,9 @@ export class AIService {
         console.error(`AI时间分析失败 (尝试 ${retryCount}/${maxRetries}):`, error);
         
         if (retryCount >= maxRetries) {
+          console.log('⚠️ AI分析失败，使用关键词备选方案');
           // 使用关键词快速估算时间作为备选方案
-          return {
+          const fallbackResult = {
             suggestedTitle: description.slice(0, 20),
             suggestedPriority: 'medium',
             suggestedTags: this.extractTagsByKeywords(description),
@@ -126,6 +135,8 @@ export class AIService {
             breakdown: [],
             dependencies: [],
           };
+          console.log('🔄 备选方案结果:', fallbackResult);
+          return fallbackResult;
         }
         
         // 快速重试，减少等待时间
