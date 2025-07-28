@@ -126,7 +126,7 @@ export class AIService {
           // 使用关键词快速估算时间作为备选方案
           const fallbackResult = {
             suggestedTitle: description.slice(0, 20),
-            suggestedPriority: 'medium',
+            suggestedPriority: 'medium' as const,
             suggestedTags: this.extractTagsByKeywords(description),
             estimatedTime: this.estimateTimeByKeywords(description),
             suggestedDueDate: this.extractDateByKeywords(description),
@@ -147,7 +147,7 @@ export class AIService {
     // 默认值
     return {
       suggestedTitle: description.slice(0, 20),
-      suggestedPriority: 'medium',
+      suggestedPriority: 'medium' as const,
       suggestedTags: [],
       estimatedTime: 30,
       suggestedDueDate: undefined,
