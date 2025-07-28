@@ -72,6 +72,9 @@ export class AITaskAnalysisDto {
   suggestedPriority: 'low' | 'medium' | 'high';
   suggestedTags: string[];
   estimatedTime: number;
+  suggestedDueDate?: string; // AI识别的截止日期
+  suggestedEndTime?: string; // AI识别的具体时间 (HH:mm格式)
+  timeExpression?: string; // 原始时间表达式 (如 "明天", "下周五")
   suggestedProject?: {
     id?: string;
     name: string;

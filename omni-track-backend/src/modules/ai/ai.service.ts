@@ -42,17 +42,39 @@ export class AIService {
     
     while (retryCount < maxRetries) {
       try {
-        // 优化后的快速时间分析提示词
-        const prompt = `快速分析任务时间因素：
-"${description}"
+        // 获取当前日期时间作为上下文
+        const now = new Date();
+        const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const currentTime = now.toTimeString().split(' ')[0].slice(0, 5); // HH:mm
+        const currentWeekday = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
+        
+        // 优化后的时间识别分析提示词
+        const prompt = `请分析任务描述中的时间信息并返回JSON：
+任务："${description}"
 
-只返回JSON，包含：
+当前时间上下文：
+- 今天：${currentDate} (星期${currentWeekday})
+- 现在时间：${currentTime}
+
+请识别并转换以下时间表达：
+- 相对时间：明天、后天、下周、下个月等
+- 绝对时间：具体日期和时间
+- 周期性：每天、每周等
+
+返回JSON格式：
 - estimatedTime: 预估时间（分钟，整数）
 - suggestedTitle: 任务标题
 - suggestedPriority: 优先级（low/medium/high）
 - suggestedTags: 标签数组（最多3个中文标签）
+- suggestedDueDate: 截止日期（YYYY-MM-DD格式，如果识别到时间）
+- suggestedEndTime: 具体时间（HH:mm格式，如果识别到时间）
+- timeExpression: 原始时间表达（如识别到相对时间）
 
-格式：{"estimatedTime":30,"suggestedTitle":"任务","suggestedPriority":"medium","suggestedTags":["标签"]}`;
+示例：
+输入："明天上午9点复查出血"
+输出：{"estimatedTime":30,"suggestedTitle":"复查出血","suggestedPriority":"medium","suggestedTags":["医疗","复查"],"suggestedDueDate":"2025-07-29","suggestedEndTime":"09:00","timeExpression":"明天上午9点"}
+
+格式：{"estimatedTime":30,"suggestedTitle":"任务","suggestedPriority":"medium","suggestedTags":["标签"],"suggestedDueDate":"YYYY-MM-DD","suggestedEndTime":"HH:mm","timeExpression":"时间表达"}`;
 
         const response = await this.openai.chat.completions.create({
           model: 'deepseek-r1',
@@ -81,6 +103,9 @@ export class AIService {
           suggestedPriority: result.suggestedPriority || 'medium',
           suggestedTags: result.suggestedTags || [],
           estimatedTime: result.estimatedTime || this.estimateTimeByKeywords(description),
+          suggestedDueDate: result.suggestedDueDate || undefined,
+          suggestedEndTime: result.suggestedEndTime || undefined,
+          timeExpression: result.timeExpression || undefined,
           breakdown: [],
           dependencies: [],
         };
@@ -95,6 +120,9 @@ export class AIService {
             suggestedPriority: 'medium',
             suggestedTags: this.extractTagsByKeywords(description),
             estimatedTime: this.estimateTimeByKeywords(description),
+            suggestedDueDate: this.extractDateByKeywords(description),
+            suggestedEndTime: this.extractTimeByKeywords(description),
+            timeExpression: this.extractTimeExpression(description),
             breakdown: [],
             dependencies: [],
           };
@@ -111,6 +139,9 @@ export class AIService {
       suggestedPriority: 'medium',
       suggestedTags: [],
       estimatedTime: 30,
+      suggestedDueDate: undefined,
+      suggestedEndTime: undefined,
+      timeExpression: undefined,
       breakdown: [],
       dependencies: [],
     };
@@ -158,6 +189,158 @@ export class AIService {
     if (description.length > 50) return 60;
     if (description.length > 20) return 45;
     return 30;
+  }
+
+  // 添加基于关键词的日期提取方法
+  private extractDateByKeywords(description: string): string | undefined {
+    const desc = description.toLowerCase();
+    const now = new Date();
+    
+    // 相对时间表达的识别
+    if (desc.includes('今天') || desc.includes('今日')) {
+      return now.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('明天')) {
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return tomorrow.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('后天')) {
+      const dayAfterTomorrow = new Date(now);
+      dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+      return dayAfterTomorrow.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('昨天')) {
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return yesterday.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('下周')) {
+      const nextWeek = new Date(now);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      return nextWeek.toISOString().split('T')[0];
+    }
+    
+    if (desc.includes('下个月') || desc.includes('下月')) {
+      const nextMonth = new Date(now);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      return nextMonth.toISOString().split('T')[0];
+    }
+    
+    // 绝对日期识别（简单的模式匹配）
+    const datePatterns = [
+      /(\d{4})[年\-\/](\d{1,2})[月\-\/](\d{1,2})[日]?/,
+      /(\d{1,2})[月\-\/](\d{1,2})[日]/,
+    ];
+    
+    for (const pattern of datePatterns) {
+      const match = desc.match(pattern);
+      if (match) {
+        if (match.length === 4) {
+          // 完整年月日
+          const year = parseInt(match[1]);
+          const month = parseInt(match[2]);
+          const day = parseInt(match[3]);
+          const date = new Date(year, month - 1, day);
+          return date.toISOString().split('T')[0];
+        } else if (match.length === 3) {
+          // 只有月日，使用当前年份
+          const month = parseInt(match[1]);
+          const day = parseInt(match[2]);
+          const date = new Date(now.getFullYear(), month - 1, day);
+          return date.toISOString().split('T')[0];
+        }
+      }
+    }
+    
+    return undefined;
+  }
+  
+  // 添加基于关键词的时间提取方法
+  private extractTimeByKeywords(description: string): string | undefined {
+    const desc = description.toLowerCase();
+    
+    // 时间表达的识别
+    const timePatterns = [
+      /(\d{1,2})[：:](\d{2})/,  // 12:30, 12：30
+      /(\d{1,2})点(\d{1,2})?分?/,  // 12点30分, 12点
+      /(上午|下午)(\d{1,2})点?(\d{1,2})?分?/,  // 上午9点, 下午2点30分
+      /(早上|中午|晚上)(\d{1,2})点?(\d{1,2})?分?/,  // 早上8点, 晚上7点30分
+    ];
+    
+    for (const pattern of timePatterns) {
+      const match = desc.match(pattern);
+      if (match) {
+        if (pattern.source.includes('：|:')) {
+          // HH:mm 格式
+          const hour = parseInt(match[1]);
+          const minute = parseInt(match[2]);
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        } else if (pattern.source.includes('上午|下午')) {
+          // 上午/下午格式
+          const period = match[1];
+          let hour = parseInt(match[2]);
+          const minute = match[3] ? parseInt(match[3]) : 0;
+          
+          if (period === '下午' && hour < 12) {
+            hour += 12;
+          } else if (period === '上午' && hour === 12) {
+            hour = 0;
+          }
+          
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        } else if (pattern.source.includes('早上|中午|晚上')) {
+          // 早上/中午/晚上格式
+          const period = match[1];
+          let hour = parseInt(match[2]);
+          const minute = match[3] ? parseInt(match[3]) : 0;
+          
+          if (period === '晚上' && hour < 12) {
+            hour += 12;
+          } else if (period === '中午' && hour === 12) {
+            hour = 12;
+          }
+          
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        } else {
+          // 简单的 X点Y分 格式
+          const hour = parseInt(match[1]);
+          const minute = match[2] ? parseInt(match[2]) : 0;
+          return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        }
+      }
+    }
+    
+    return undefined;
+  }
+  
+  // 提取原始时间表达
+  private extractTimeExpression(description: string): string | undefined {
+    const timeExpressions = [
+      '明天', '后天', '昨天', '今天',
+      '下周', '下个月', '下月',
+      '上午', '下午', '早上', '中午', '晚上',
+      '明早', '明晚', '今晚'
+    ];
+    
+    for (const expr of timeExpressions) {
+      if (description.includes(expr)) {
+        // 尝试提取包含时间表达的短语
+        const words = description.split(/\s+/);
+        for (const word of words) {
+          if (word.includes(expr)) {
+            return word;
+          }
+        }
+        return expr;
+      }
+    }
+    
+    return undefined;
   }
 
   // 添加基于关键词的标签提取方法

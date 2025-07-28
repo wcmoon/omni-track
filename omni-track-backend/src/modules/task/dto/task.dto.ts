@@ -21,6 +21,10 @@ export class CreateTaskDto {
   dueDate?: string;
 
   @IsOptional()
+  @IsString({ message: '具体时间必须是字符串' })
+  endTime?: string; // HH:mm格式的具体时间
+
+  @IsOptional()
   @IsNumber({}, { message: '预估时长必须是数字' })
   estimatedDuration?: number;
 
@@ -91,6 +95,7 @@ export class TaskResponseDto {
   priority: 'low' | 'medium' | 'high';
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
   dueDate?: Date;
+  endTime?: string; // HH:mm格式的具体时间
   estimatedDuration?: number;
   actualDuration?: number;
   projectId?: string;

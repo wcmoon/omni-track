@@ -26,6 +26,7 @@ export class TaskService {
       priority: createTaskDto.priority || 'medium',
       status: 'pending' as const,
       dueDate: createTaskDto.dueDate ? new Date(createTaskDto.dueDate) : undefined,
+      endTime: createTaskDto.endTime,
       estimatedDuration: createTaskDto.estimatedDuration,
       projectId: createTaskDto.projectId,
       userId,
@@ -146,19 +147,24 @@ export class TaskService {
     });
 
     // 如果任务状态变为已完成，自动创建完成日志
+    console.log(`任务状态更新: ${task.status} -> ${updateTaskDto.status}`);
     if (updateTaskDto.status === 'completed' && task.status !== 'completed') {
+      console.log(`创建任务完成日志: 任务 ${task.id} - ${task.description}`);
       try {
-        await this.logService.create({
+        const logResult = await this.logService.create({
           content: `完成了任务：${task.description}。感觉很有成就感！`,
           type: '任务完成',
           tags: ['任务完成', '成就'],
           mood: 'good' as const,
           energy: 'medium' as const,
         }, userId);
+        console.log('任务完成日志创建成功:', logResult);
       } catch (error) {
         console.error('创建任务完成日志失败:', error);
         // 不抛出错误，不影响任务更新的主流程
       }
+    } else {
+      console.log(`不满足创建日志条件: status=${updateTaskDto.status}, task.status=${task.status}`);
     }
 
     // 发送任务更新通知
@@ -254,23 +260,37 @@ export class TaskService {
     suggestions?: any;
     subtasks?: TaskResponseDto[];
   }> {
+    // 首先进行AI分析，包括时间识别
+    const aiAnalysis = await this.aiService.analyzeTaskDescription(smartCreateTaskDto.description);
+    
+    // 合并用户输入的时间和AI识别的时间
+    let finalDueDate = smartCreateTaskDto.dueDate;
+    let finalEndTime: string | undefined;
+    
+    // 如果用户没有提供时间，但AI识别到了时间，则使用AI识别的时间
+    if (!smartCreateTaskDto.dueDate && aiAnalysis.suggestedDueDate) {
+      finalDueDate = aiAnalysis.suggestedDueDate;
+      finalEndTime = aiAnalysis.suggestedEndTime;
+    }
+    
     // 导入 SmartTodoService (为了避免循环依赖，这里使用简化的智能逻辑)
     const suggestions = await this.analyzeTaskForSuggestions(
       smartCreateTaskDto.title,
       smartCreateTaskDto.description,
-      smartCreateTaskDto.dueDate ? new Date(smartCreateTaskDto.dueDate) : undefined
+      finalDueDate ? new Date(finalDueDate) : undefined
     );
 
     // 创建主任务，应用智能建议
     const taskData: CreateTaskDto = {
-      title: smartCreateTaskDto.title,
+      title: smartCreateTaskDto.title || aiAnalysis.suggestedTitle,
       description: smartCreateTaskDto.description,
-      priority: smartCreateTaskDto.useSmartSuggestions !== false ? suggestions.suggestedPriority : 'medium',
-      dueDate: smartCreateTaskDto.dueDate,
-      estimatedDuration: smartCreateTaskDto.useSmartSuggestions !== false ? suggestions.estimatedDuration : undefined,
+      priority: smartCreateTaskDto.useSmartSuggestions !== false ? aiAnalysis.suggestedPriority : 'medium',
+      dueDate: finalDueDate,
+      endTime: finalEndTime, // 添加具体时间
+      estimatedDuration: smartCreateTaskDto.useSmartSuggestions !== false ? aiAnalysis.estimatedTime : undefined,
       projectId: smartCreateTaskDto.projectId,
       parentTaskId: undefined,
-      tags: smartCreateTaskDto.useSmartSuggestions !== false ? suggestions.tags : [],
+      tags: smartCreateTaskDto.useSmartSuggestions !== false ? [...new Set([...(smartCreateTaskDto.tags || []), ...aiAnalysis.suggestedTags])] : [],
     };
 
     const mainTask = await this.create(taskData, userId);
@@ -549,6 +569,7 @@ export class TaskService {
       priority: task.priority,
       status: task.status,
       dueDate: task.dueDate,
+      endTime: task.endTime,
       estimatedDuration: task.estimatedDuration,
       actualDuration: task.actualDuration,
       projectId: task.projectId,

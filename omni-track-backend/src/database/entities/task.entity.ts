@@ -33,6 +33,9 @@ export class Task {
   dueDate?: Date; // 截止日期(可选)
 
   @Column({ nullable: true })
+  endTime?: string; // 具体时间(HH:mm格式)(可选)
+
+  @Column({ nullable: true })
   estimatedDuration?: number; // AI分析预估的花费时间(分钟)(可选)
 
   @Column({ nullable: true })
