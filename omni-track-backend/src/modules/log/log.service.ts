@@ -1,18 +1,21 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { LogEntry } from '../../database/entities/log-entry.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Log } from '../../database/entities/log.entity';
 import { CreateLogEntryDto, UpdateLogEntryDto, LogEntryResponseDto } from './dto/log.dto';
 import { SmartLogDto } from './dto/smart-log.dto';
 import { AIService } from '../ai/ai.service';
 
 @Injectable()
 export class LogService {
-  private logEntries: LogEntry[] = []; // 临时存储，后续会替换为数据库
-
-  constructor(private readonly aiService: AIService) {}
+  constructor(
+    @InjectRepository(Log)
+    private readonly logRepository: Repository<Log>,
+    private readonly aiService: AIService
+  ) {}
 
   async create(createLogEntryDto: CreateLogEntryDto, userId: string): Promise<LogEntryResponseDto> {
-    const logEntry: LogEntry = {
-      id: Date.now().toString(),
+    const logEntry = this.logRepository.create({
       type: createLogEntryDto.type,
       content: createLogEntryDto.content,
       metadata: createLogEntryDto.metadata,
@@ -26,12 +29,10 @@ export class LogService {
       relatedTaskId: createLogEntryDto.relatedTaskId,
       aiEnhanced: false,
       aiSuggestions: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    this.logEntries.push(logEntry);
-    return this.toResponseDto(logEntry);
+    const savedLogEntry = await this.logRepository.save(logEntry);
+    return this.toResponseDto(savedLogEntry);
   }
 
   async findAll(userId: string, options?: {
@@ -42,157 +43,222 @@ export class LogService {
     limit?: number;
     offset?: number;
   }): Promise<LogEntryResponseDto[]> {
-    let userLogs = this.logEntries.filter(l => l.userId === userId);
+    const query = this.logRepository.createQueryBuilder('log')
+      .where('log.userId = :userId', { userId })
+      .orderBy('log.createdAt', 'DESC');
     
     // 按类型过滤
     if (options?.type) {
-      userLogs = userLogs.filter(l => l.type === options.type);
+      query.andWhere('log.type = :type', { type: options.type });
     }
 
     // 按项目过滤
     if (options?.projectId) {
-      userLogs = userLogs.filter(l => l.projectId === options.projectId);
+      query.andWhere('log.projectId = :projectId', { projectId: options.projectId });
     }
 
-    // 按日期范围过滤
+    // 按时间过滤
     if (options?.startDate) {
-      const startDate = new Date(options.startDate);
-      userLogs = userLogs.filter(l => l.createdAt >= startDate);
+      query.andWhere('log.createdAt >= :startDate', { startDate: new Date(options.startDate) });
     }
-
+    
     if (options?.endDate) {
-      const endDate = new Date(options.endDate);
-      userLogs = userLogs.filter(l => l.createdAt <= endDate);
+      query.andWhere('log.createdAt <= :endDate', { endDate: new Date(options.endDate) });
     }
-
-    // 按创建时间倒序排序
-    userLogs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-
+    
     // 分页
-    if (options?.offset) {
-      userLogs = userLogs.slice(options.offset);
+    if (options?.offset !== undefined) {
+      query.offset(options.offset);
     }
-
-    if (options?.limit) {
-      userLogs = userLogs.slice(0, options.limit);
+    
+    if (options?.limit !== undefined) {
+      query.limit(options.limit);
     }
-
-    return userLogs.map(l => this.toResponseDto(l));
+    
+    const logs = await query.getMany();
+    return logs.map(l => this.toResponseDto(l));
   }
 
   async findOne(id: string, userId: string): Promise<LogEntryResponseDto> {
-    const logEntry = this.logEntries.find(l => l.id === id && l.userId === userId);
+    const logEntry = await this.logRepository.findOne({
+      where: { id, userId }
+    });
+    
     if (!logEntry) {
       throw new NotFoundException('日志条目不存在');
     }
+    
     return this.toResponseDto(logEntry);
   }
 
   async update(id: string, updateLogEntryDto: UpdateLogEntryDto, userId: string): Promise<LogEntryResponseDto> {
-    const logEntryIndex = this.logEntries.findIndex(l => l.id === id);
-    if (logEntryIndex === -1) {
+    const logEntry = await this.logRepository.findOne({
+      where: { id, userId }
+    });
+    
+    if (!logEntry) {
       throw new NotFoundException('日志条目不存在');
     }
 
-    const logEntry = this.logEntries[logEntryIndex];
-    if (logEntry.userId !== userId) {
-      throw new ForbiddenException('无权限修改此日志条目');
-    }
+    await this.logRepository.update(id, updateLogEntryDto);
+    
+    const updatedLogEntry = await this.logRepository.findOne({
+      where: { id, userId }
+    });
 
-    // 更新日志条目
-    this.logEntries[logEntryIndex] = {
-      ...logEntry,
-      ...updateLogEntryDto,
-      updatedAt: new Date(),
-    };
-
-    return this.toResponseDto(this.logEntries[logEntryIndex]);
+    return this.toResponseDto(updatedLogEntry!);
   }
 
   async remove(id: string, userId: string): Promise<void> {
-    const logEntryIndex = this.logEntries.findIndex(l => l.id === id);
-    if (logEntryIndex === -1) {
+    const logEntry = await this.logRepository.findOne({
+      where: { id, userId }
+    });
+    
+    if (!logEntry) {
       throw new NotFoundException('日志条目不存在');
     }
 
-    const logEntry = this.logEntries[logEntryIndex];
-    if (logEntry.userId !== userId) {
-      throw new ForbiddenException('无权限删除此日志条目');
-    }
-
-    this.logEntries.splice(logEntryIndex, 1);
+    await this.logRepository.delete(id);
   }
 
   async findByType(userId: string, type: string): Promise<LogEntryResponseDto[]> {
-    const userLogs = this.logEntries.filter(l => l.userId === userId && l.type === type);
-    return userLogs.map(l => this.toResponseDto(l));
+    const logs = await this.logRepository.find({
+      where: { userId, type },
+      order: { createdAt: 'DESC' }
+    });
+    
+    return logs.map(l => this.toResponseDto(l));
   }
 
-  async findByTags(userId: string, tags: string[]): Promise<LogEntryResponseDto[]> {
-    const userLogs = this.logEntries.filter(l => 
-      l.userId === userId && 
-      l.tags && 
-      tags.some(tag => l.tags!.includes(tag))
-    );
-    return userLogs.map(l => this.toResponseDto(l));
+  async findByDateRange(userId: string, startDate: Date, endDate: Date): Promise<LogEntryResponseDto[]> {
+    const logs = await this.logRepository
+      .createQueryBuilder('log')
+      .where('log.userId = :userId', { userId })
+      .andWhere('log.createdAt >= :startDate', { startDate })
+      .andWhere('log.createdAt <= :endDate', { endDate })
+      .orderBy('log.createdAt', 'DESC')
+      .getMany();
+      
+    return logs.map(l => this.toResponseDto(l));
   }
 
-  async getLogStatistics(userId: string): Promise<{
+  async getStatistics(userId: string, days: number = 30): Promise<{
     total: number;
-    typeBreakdown: Record<string, number>;
-    moodBreakdown: Record<string, number>;
-    energyBreakdown: Record<string, number>;
+    byType: Record<string, number>;
+    byMood: Record<string, number>;
     recentCount: number;
   }> {
-    const userLogs = this.logEntries.filter(l => l.userId === userId);
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - days);
     
-    const typeBreakdown: Record<string, number> = {};
-    const moodBreakdown: Record<string, number> = {};
-    const energyBreakdown: Record<string, number> = {};
-
-    userLogs.forEach(log => {
-      // 类型统计
-      typeBreakdown[log.type] = (typeBreakdown[log.type] || 0) + 1;
-      
-      // 心情统计
-      if (log.mood) {
-        moodBreakdown[log.mood] = (moodBreakdown[log.mood] || 0) + 1;
+    const [total, recent, allLogs] = await Promise.all([
+      this.logRepository.count({ where: { userId } }),
+      this.logRepository
+        .createQueryBuilder('log')
+        .where('log.userId = :userId', { userId })
+        .andWhere('log.createdAt >= :sinceDate', { sinceDate })
+        .getCount(),
+      this.logRepository.find({ 
+        where: { userId },
+        order: { createdAt: 'DESC' }
+      })
+    ]);
+    
+    const byType: Record<string, number> = {};
+    const byMood: Record<string, number> = {};
+    
+    allLogs.forEach(log => {
+      if (log.type) {
+        byType[log.type] = (byType[log.type] || 0) + 1;
       }
-      
-      // 精力统计
-      if (log.energy) {
-        energyBreakdown[log.energy] = (energyBreakdown[log.energy] || 0) + 1;
+      if (log.mood) {
+        byMood[log.mood] = (byMood[log.mood] || 0) + 1;
       }
     });
-
+    
     return {
-      total: userLogs.length,
-      typeBreakdown,
-      moodBreakdown,
-      energyBreakdown,
-      recentCount: userLogs.filter(l => l.createdAt >= sevenDaysAgo).length,
+      total,
+      byType,
+      byMood,
+      recentCount: recent,
     };
   }
 
-  async searchLogs(userId: string, query: string): Promise<LogEntryResponseDto[]> {
-    const userLogs = this.logEntries.filter(l => 
-      l.userId === userId && 
-      (l.content.toLowerCase().includes(query.toLowerCase()) ||
-       (l.tags && l.tags.some(tag => tag.toLowerCase().includes(query.toLowerCase()))))
-    );
-    return userLogs.map(l => this.toResponseDto(l));
+  async createSmartLog(smartLogDto: SmartLogDto, userId: string): Promise<LogEntryResponseDto> {
+    // AI分析日志内容
+    const analysis = await this.aiService.analyzeLogContent(smartLogDto.content);
+    
+    const logEntry = this.logRepository.create({
+      type: analysis.suggestedType || smartLogDto.type || '日常',
+      content: smartLogDto.content,
+      tags: [...(smartLogDto.tags || []), ...(analysis.suggestedTags || [])],
+      mood: smartLogDto.mood,
+      energy: smartLogDto.energy,
+      location: smartLogDto.location,
+      weather: smartLogDto.weather,
+      sentiment: analysis.sentiment,
+      categories: analysis.keyPoints,
+      userId,
+      projectId: smartLogDto.projectId,
+      relatedTaskId: smartLogDto.relatedTaskId,
+      aiEnhanced: true,
+      aiSuggestions: [{
+        type: 'analysis',
+        data: analysis,
+        timestamp: new Date(),
+      }],
+    });
+
+    const savedLogEntry = await this.logRepository.save(logEntry);
+    return this.toResponseDto(savedLogEntry);
   }
 
-  private toResponseDto(logEntry: LogEntry): LogEntryResponseDto {
+  async searchLogs(userId: string, query: string): Promise<LogEntryResponseDto[]> {
+    const logs = await this.logRepository
+      .createQueryBuilder('log')
+      .where('log.userId = :userId', { userId })
+      .andWhere('(log.content ILIKE :query OR log.type ILIKE :query)', { query: `%${query}%` })
+      .orderBy('log.createdAt', 'DESC')
+      .getMany();
+      
+    return logs.map(l => this.toResponseDto(l));
+  }
+
+  async findByTags(userId: string, tags: string[]): Promise<LogEntryResponseDto[]> {
+    const logs = await this.logRepository
+      .createQueryBuilder('log')
+      .where('log.userId = :userId', { userId })
+      .andWhere('log.tags && :tags', { tags })
+      .orderBy('log.createdAt', 'DESC')
+      .getMany();
+      
+    return logs.map(l => this.toResponseDto(l));
+  }
+
+  async analyzeLogContent(content: string): Promise<any> {
+    return this.aiService.analyzeLogContent(content);
+  }
+
+  async getLogTypes(userId: string): Promise<string[]> {
+    const result = await this.logRepository
+      .createQueryBuilder('log')
+      .select('DISTINCT log.type', 'type')
+      .where('log.userId = :userId', { userId })
+      .andWhere('log.type IS NOT NULL')
+      .getRawMany();
+      
+    return result.map(r => r.type).filter(Boolean);
+  }
+
+  private toResponseDto(logEntry: Log): LogEntryResponseDto {
     return {
       id: logEntry.id,
       type: logEntry.type,
       content: logEntry.content,
       metadata: logEntry.metadata,
       tags: logEntry.tags,
-      mood: logEntry.mood,
-      energy: logEntry.energy,
+      mood: logEntry.mood as 'very_bad' | 'bad' | 'neutral' | 'good' | 'very_good' | undefined,
+      energy: logEntry.energy as 'very_low' | 'low' | 'medium' | 'high' | 'very_high' | undefined,
       location: logEntry.location,
       weather: logEntry.weather,
       userId: logEntry.userId,
@@ -200,53 +266,10 @@ export class LogService {
       relatedTaskId: logEntry.relatedTaskId,
       aiEnhanced: logEntry.aiEnhanced,
       aiSuggestions: logEntry.aiSuggestions,
+      sentiment: logEntry.sentiment,
+      categories: logEntry.categories,
       createdAt: logEntry.createdAt,
       updatedAt: logEntry.updatedAt,
     };
-  }
-
-  async analyzeLogContent(content: string): Promise<any> {
-    return await this.aiService.analyzeLogContent(content);
-  }
-
-  async createSmartLog(smartLogDto: SmartLogDto, userId: string): Promise<{
-    log: LogEntryResponseDto;
-    analysis: any;
-  }> {
-    // 首先分析日志内容
-    const analysis = await this.aiService.analyzeLogContent(smartLogDto.content);
-
-    // 创建增强的日志条目
-    const createLogDto: CreateLogEntryDto = {
-      type: smartLogDto.type || analysis.suggestedType,
-      content: smartLogDto.content,
-      tags: [
-        ...(smartLogDto.tags || []),
-        ...analysis.suggestedTags,
-      ],
-      metadata: {
-        aiAnalysis: analysis,
-        keyPoints: analysis.keyPoints,
-        summary: analysis.summary,
-      },
-    };
-
-    const logEntry = await this.create(createLogDto, userId);
-
-    return {
-      log: logEntry,
-      analysis,
-    };
-  }
-
-  async getLogTypes(userId: string): Promise<string[]> {
-    const userLogs = this.logEntries.filter(entry => entry.userId === userId);
-    const types = [...new Set(userLogs.map(log => log.type))];
-    
-    // 默认类型
-    const defaultTypes = ['工作', '学习', '生活', '健康', '娱乐', '社交'];
-    
-    // 合并并去重
-    return [...new Set([...defaultTypes, ...types])];
   }
 }

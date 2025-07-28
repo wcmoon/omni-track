@@ -325,8 +325,14 @@ export class SmartTodoService {
     const reminders = [];
 
     for (const task of userTasks) {
-      // 逾期提醒
-      if (task.dueDate && task.dueDate < now && task.status !== 'completed') {
+      // 跳过已完成的任务
+      if (task.status === 'completed') {
+        continue;
+      }
+
+      // 按优先级顺序检查提醒类型，每个任务只产生一个提醒
+      // 1. 最高优先级：逾期提醒
+      if (task.dueDate && task.dueDate < now) {
         reminders.push({
           taskId: task.id,
           title: task.title,
@@ -335,11 +341,10 @@ export class SmartTodoService {
           priority: 'high' as const,
         });
       }
-      
-      // 即将到期提醒
+      // 2. 中等优先级：即将到期提醒
       else if (task.dueDate) {
         const hoursUntilDue = (task.dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-        if (hoursUntilDue <= 24 && hoursUntilDue > 0 && task.status !== 'completed') {
+        if (hoursUntilDue <= 24 && hoursUntilDue > 0) {
           reminders.push({
             taskId: task.id,
             title: task.title,
@@ -349,9 +354,8 @@ export class SmartTodoService {
           });
         }
       }
-
-      // 建议开始高优先级任务
-      if (task.priority === 'high' && task.status === 'pending') {
+      // 3. 较低优先级：建议开始高优先级任务（仅当没有截止日期时）
+      else if (task.priority === 'high' && task.status === 'pending') {
         reminders.push({
           taskId: task.id,
           title: task.title,

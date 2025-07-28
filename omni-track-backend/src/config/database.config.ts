@@ -6,6 +6,6 @@ export const getDatabaseConfig = (configService: ConfigService): TypeOrmModuleOp
   url: configService.get<string>('DATABASE_URL'),
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   synchronize: configService.get<string>('NODE_ENV') !== 'production',
-  logging: configService.get<string>('NODE_ENV') === 'development',
+  logging: false, // 禁用SQL查询日志避免刷屏
   ssl: configService.get<string>('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
 });

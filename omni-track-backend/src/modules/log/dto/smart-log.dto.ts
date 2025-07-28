@@ -14,6 +14,36 @@ export class SmartLogDto {
   @IsArray({ message: '标签必须是数组' })
   @IsString({ each: true, message: '每个标签必须是字符串' })
   tags?: string[];
+
+  @IsOptional()
+  @IsEnum(['very_bad', 'bad', 'neutral', 'good', 'very_good'], { 
+    message: '心情必须是 very_bad、bad、neutral、good 或 very_good' 
+  })
+  mood?: 'very_bad' | 'bad' | 'neutral' | 'good' | 'very_good';
+
+  @IsOptional()
+  @IsEnum(['very_low', 'low', 'medium', 'high', 'very_high'], { 
+    message: '精力必须是 very_low、low、medium、high 或 very_high' 
+  })
+  energy?: 'very_low' | 'low' | 'medium' | 'high' | 'very_high';
+
+  @IsOptional()
+  @IsString({ message: '位置必须是字符串' })
+  @MaxLength(200, { message: '位置不能超过200个字符' })
+  location?: string;
+
+  @IsOptional()
+  @IsString({ message: '天气必须是字符串' })
+  @MaxLength(100, { message: '天气不能超过100个字符' })
+  weather?: string;
+
+  @IsOptional()
+  @IsString({ message: '项目ID必须是字符串' })
+  projectId?: string;
+
+  @IsOptional()
+  @IsString({ message: '相关任务ID必须是字符串' })
+  relatedTaskId?: string;
 }
 
 export class AnalyzeLogDto {

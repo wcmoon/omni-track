@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Request } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Public } from '../../common/decorators/public.decorator';
 import { LogService } from './log.service';
 import { SmartLogService } from './smart-log.service';
 import { CreateLogEntryDto, UpdateLogEntryDto } from './dto/log.dto';
@@ -15,7 +16,7 @@ export class LogController {
 
   @Post()
   async create(@Body() createLogEntryDto: CreateLogEntryDto, @Request() req) {
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.create(createLogEntryDto, userId);
     return {
       success: true,
@@ -41,7 +42,7 @@ export class LogController {
       ],
     };
 
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.create(enhancedDto, userId);
     
     return {
@@ -73,7 +74,7 @@ export class LogController {
       offset: offset ? parseInt(offset) : undefined,
     };
 
-    const userId = req.user?.id || '1751615073420'; // Test user ID
+    const userId = req.user.id;
     const result = await this.logService.findAll(userId, options);
     return {
       success: true,
@@ -83,8 +84,8 @@ export class LogController {
 
   @Get('statistics')
   async getStatistics(@Request() req) {
-    const userId = req.user?.id || '1751615073420';
-    const result = await this.logService.getLogStatistics(userId);
+    const userId = req.user.id;
+    const result = await this.logService.getStatistics(userId);
     return {
       success: true,
       data: result,
@@ -101,7 +102,7 @@ export class LogController {
       };
     }
 
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.searchLogs(userId, query);
     return {
       success: true,
@@ -111,7 +112,7 @@ export class LogController {
 
   @Get('type/:type')
   async findByType(@Param('type') type: string, @Request() req) {
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.findByType(userId, type);
     return {
       success: true,
@@ -130,7 +131,7 @@ export class LogController {
     }
 
     const tagArray = tags.split(',').map(tag => tag.trim());
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.findByTags(userId, tagArray);
     return {
       success: true,
@@ -140,7 +141,7 @@ export class LogController {
 
   @Get(':id')
   async findOne(@Param('id') id: string, @Request() req) {
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.findOne(id, userId);
     return {
       success: true,
@@ -150,7 +151,7 @@ export class LogController {
 
   @Patch(':id')
   async update(@Param('id') id: string, @Body() updateLogEntryDto: UpdateLogEntryDto, @Request() req) {
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.update(id, updateLogEntryDto, userId);
     return {
       success: true,
@@ -161,7 +162,7 @@ export class LogController {
 
   @Delete(':id')
   async remove(@Param('id') id: string, @Request() req) {
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     await this.logService.remove(id, userId);
     return {
       success: true,
@@ -181,7 +182,7 @@ export class LogController {
 
   @Post('smart-log')
   async createSmartLog(@Body() smartLogDto: SmartLogDto, @Request() req) {
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.createSmartLog(smartLogDto, userId);
     return {
       success: true,
@@ -192,7 +193,7 @@ export class LogController {
 
   @Get('types')
   async getLogTypes(@Request() req) {
-    const userId = req.user?.id || '1751615073420';
+    const userId = req.user.id;
     const result = await this.logService.getLogTypes(userId);
     return {
       success: true,

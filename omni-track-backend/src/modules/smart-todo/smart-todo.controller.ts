@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, UseGuards, Request } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Public } from '../../common/decorators/public.decorator';
 import { SmartTodoService } from './smart-todo.service';
 import { AnalyzeTaskDto, BreakdownTaskDto } from './dto/smart-todo.dto';
 
@@ -63,9 +64,10 @@ export class SmartTodoController {
 
   @Get('dashboard')
   async getSmartDashboard(@Request() req) {
+    const userId = req.user.id;
     const [reminders, workflow] = await Promise.all([
-      this.smartTodoService.getSmartReminders(req.user.id),
-      this.smartTodoService.suggestWorkflow(req.user.id),
+      this.smartTodoService.getSmartReminders(userId),
+      this.smartTodoService.suggestWorkflow(userId),
     ]);
 
     return {

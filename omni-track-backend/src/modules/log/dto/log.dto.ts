@@ -117,7 +117,9 @@ export class LogEntryResponseDto {
   projectId?: string;
   relatedTaskId?: string;
   aiEnhanced: boolean;
-  aiSuggestions?: string[];
+  aiSuggestions?: any[];
+  sentiment?: string;
+  categories?: string[];
   createdAt: Date;
   updatedAt: Date;
 }

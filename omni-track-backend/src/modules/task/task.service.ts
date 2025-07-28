@@ -1,26 +1,30 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { Task } from '../../database/entities/task.entity';
 import { CreateTaskDto, UpdateTaskDto, TaskResponseDto } from './dto/task.dto';
 import { SmartCreateTaskDto, BatchCreateTaskDto, AITaskAnalysisDto } from './dto/smart-task.dto';
 import { AIService } from '../ai/ai.service';
 import { TaskWebSocketGateway } from '../websocket/websocket.gateway';
+import { LogService } from '../log/log.service';
 
 @Injectable()
 export class TaskService {
-  private tasks: Task[] = []; // 临时存储，后续会替换为数据库
-
   constructor(
+    @InjectRepository(Task)
+    private readonly taskRepository: Repository<Task>,
     private readonly aiService: AIService,
     private readonly wsGateway: TaskWebSocketGateway,
+    @Inject(forwardRef(() => LogService))
+    private readonly logService: LogService,
   ) {}
 
   async create(createTaskDto: CreateTaskDto, userId: string): Promise<TaskResponseDto> {
-    const task: Task = {
-      id: Date.now().toString(),
+    const taskData = {
       title: createTaskDto.title,
       description: createTaskDto.description,
       priority: createTaskDto.priority || 'medium',
-      status: 'pending',
+      status: 'pending' as const,
       dueDate: createTaskDto.dueDate ? new Date(createTaskDto.dueDate) : undefined,
       estimatedDuration: createTaskDto.estimatedDuration,
       projectId: createTaskDto.projectId,
@@ -28,18 +32,20 @@ export class TaskService {
       parentTaskId: createTaskDto.parentTaskId,
       tags: createTaskDto.tags || [],
       aiGenerated: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
     };
-
-    this.tasks.push(task);
+    
+    const task = this.taskRepository.create(taskData);
+    const savedTask = await this.taskRepository.save(task);
+    
+    // 发送任务创建通知
+    this.wsGateway.notifyTaskCreated(userId, savedTask.id);
     
     // 异步AI分析（不阻塞返回，且只对未完成任务进行）
-    if (task.status !== 'completed') {
-      this.performAsyncAIAnalysis(task.id, createTaskDto.description, userId);
+    if (savedTask.status !== 'completed') {
+      this.performAsyncAIAnalysis(savedTask.id, createTaskDto.description, userId);
     }
     
-    return this.toResponseDto(task);
+    return this.toResponseDto(savedTask);
   }
 
   private async performAsyncAIAnalysis(taskId: string, description: string, userId: string): Promise<void> {
@@ -47,21 +53,23 @@ export class TaskService {
       console.log(`🤖 开始异步AI分析任务: ${taskId}`);
       const analysis = await this.aiService.analyzeTaskDescription(description);
       
-      // 更新任务的AI分析结果（只更新未完成的任务）
-      const taskIndex = this.tasks.findIndex(t => t.id === taskId);
-      if (taskIndex !== -1 && this.tasks[taskIndex].status !== 'completed') {
+      // 查找任务并更新AI分析结果（只更新未完成的任务）
+      const task = await this.taskRepository.findOne({
+        where: { id: taskId, userId }
+      });
+      
+      if (task && task.status !== 'completed') {
         // 合并标签并去重
-        const mergedTags = [...new Set([...(this.tasks[taskIndex].tags || []), ...(analysis.suggestedTags || [])])];
+        const mergedTags = [...new Set([...(task.tags || []), ...(analysis.suggestedTags || [])])];
         
-        this.tasks[taskIndex] = {
-          ...this.tasks[taskIndex],
-          estimatedDuration: analysis.estimatedTime || this.tasks[taskIndex].estimatedDuration,
-          priority: analysis.suggestedPriority || this.tasks[taskIndex].priority,
+        await this.taskRepository.update(taskId, {
+          estimatedDuration: analysis.estimatedTime || task.estimatedDuration,
+          priority: analysis.suggestedPriority || task.priority,
           tags: mergedTags,
           aiContext: `AI分析：优先级 ${analysis.suggestedPriority}，预估时间 ${analysis.estimatedTime}分钟`,
           aiGenerated: true,
-          updatedAt: new Date(),
-        };
+        });
+        
         console.log(`✅ 任务 ${taskId} AI分析完成`);
         
         // 发送WebSocket通知
@@ -72,7 +80,7 @@ export class TaskService {
           aiContext: `AI分析：优先级 ${analysis.suggestedPriority}，预估时间 ${analysis.estimatedTime}分钟`,
           aiGenerated: true,
         });
-      } else if (taskIndex !== -1 && this.tasks[taskIndex].status === 'completed') {
+      } else if (task && task.status === 'completed') {
         console.log(`⚠️ 任务 ${taskId} 已完成，跳过AI分析结果更新`);
       }
     } catch (error) {
@@ -81,32 +89,39 @@ export class TaskService {
   }
 
   async findAll(userId: string, projectId?: string): Promise<TaskResponseDto[]> {
-    let userTasks = this.tasks.filter(t => t.userId === userId);
+    const where: any = { userId };
     
     if (projectId) {
-      userTasks = userTasks.filter(t => t.projectId === projectId);
+      where.projectId = projectId;
     }
 
-    return userTasks.map(t => this.toResponseDto(t));
+    const tasks = await this.taskRepository.find({
+      where,
+      order: { createdAt: 'DESC' }
+    });
+
+    return tasks.map(t => this.toResponseDto(t));
   }
 
   async findOne(id: string, userId: string): Promise<TaskResponseDto> {
-    const task = this.tasks.find(t => t.id === id && t.userId === userId);
+    const task = await this.taskRepository.findOne({
+      where: { id, userId }
+    });
+    
     if (!task) {
       throw new NotFoundException('任务不存在');
     }
+    
     return this.toResponseDto(task);
   }
 
   async update(id: string, updateTaskDto: UpdateTaskDto, userId: string): Promise<TaskResponseDto> {
-    const taskIndex = this.tasks.findIndex(t => t.id === id);
-    if (taskIndex === -1) {
+    const task = await this.taskRepository.findOne({
+      where: { id, userId }
+    });
+    
+    if (!task) {
       throw new NotFoundException('任务不存在');
-    }
-
-    const task = this.tasks[taskIndex];
-    if (task.userId !== userId) {
-      throw new ForbiddenException('无权限修改此任务');
     }
 
     // 处理状态变更
@@ -118,56 +133,86 @@ export class TaskService {
     }
 
     // 更新任务
-    this.tasks[taskIndex] = {
-      ...task,
+    const updateData = {
       ...updateTaskDto,
       dueDate: updateTaskDto.dueDate ? new Date(updateTaskDto.dueDate) : task.dueDate,
-      updatedAt: new Date(),
       completedAt,
     };
+    
+    await this.taskRepository.update(id, updateData);
+    
+    const updatedTask = await this.taskRepository.findOne({
+      where: { id, userId }
+    });
 
-    return this.toResponseDto(this.tasks[taskIndex]);
+    // 如果任务状态变为已完成，自动创建完成日志
+    if (updateTaskDto.status === 'completed' && task.status !== 'completed') {
+      try {
+        await this.logService.create({
+          content: `完成了任务：${task.description}。感觉很有成就感！`,
+          type: '任务完成',
+          tags: ['任务完成', '成就'],
+          mood: 'good' as const,
+          energy: 'medium' as const,
+        }, userId);
+      } catch (error) {
+        console.error('创建任务完成日志失败:', error);
+        // 不抛出错误，不影响任务更新的主流程
+      }
+    }
+
+    // 发送任务更新通知
+    this.wsGateway.notifyTaskUpdated(userId, id);
+
+    return this.toResponseDto(updatedTask!);
   }
 
   async remove(id: string, userId: string): Promise<void> {
-    const taskIndex = this.tasks.findIndex(t => t.id === id);
-    if (taskIndex === -1) {
+    const task = await this.taskRepository.findOne({
+      where: { id, userId }
+    });
+    
+    if (!task) {
       throw new NotFoundException('任务不存在');
     }
 
-    const task = this.tasks[taskIndex];
-    if (task.userId !== userId) {
-      throw new ForbiddenException('无权限删除此任务');
-    }
-
-    this.tasks.splice(taskIndex, 1);
+    await this.taskRepository.delete(id);
+    
+    // 发送任务删除通知
+    this.wsGateway.notifyTaskDeleted(userId, id);
   }
 
   async findByStatus(userId: string, status: 'pending' | 'in_progress' | 'completed' | 'cancelled'): Promise<TaskResponseDto[]> {
-    const userTasks = this.tasks.filter(t => t.userId === userId && t.status === status);
-    return userTasks.map(t => this.toResponseDto(t));
+    const tasks = await this.taskRepository.find({
+      where: { userId, status }
+    });
+    return tasks.map(t => this.toResponseDto(t));
   }
 
   async findByPriority(userId: string, priority: 'low' | 'medium' | 'high'): Promise<TaskResponseDto[]> {
-    const userTasks = this.tasks.filter(t => t.userId === userId && t.priority === priority);
-    return userTasks.map(t => this.toResponseDto(t));
+    const tasks = await this.taskRepository.find({
+      where: { userId, priority }
+    });
+    return tasks.map(t => this.toResponseDto(t));
   }
 
   async findOverdueTasks(userId: string): Promise<TaskResponseDto[]> {
     const now = new Date();
-    const overdueTasks = this.tasks.filter(t => 
-      t.userId === userId && 
-      t.dueDate && 
-      t.dueDate < now && 
-      t.status !== 'completed' && 
-      t.status !== 'cancelled'
-    );
-    return overdueTasks.map(t => this.toResponseDto(t));
+    const tasks = await this.taskRepository
+      .createQueryBuilder('task')
+      .where('task.userId = :userId', { userId })
+      .andWhere('task.dueDate < :now', { now })
+      .andWhere('task.status NOT IN (:...statuses)', { statuses: ['completed', 'cancelled'] })
+      .getMany();
+      
+    return tasks.map(t => this.toResponseDto(t));
   }
 
   async findSubTasks(parentTaskId: string, userId: string): Promise<TaskResponseDto[]> {
-    const subTasks = this.tasks.filter(t => t.parentTaskId === parentTaskId && t.userId === userId);
-    return subTasks.map(t => this.toResponseDto(t));
+    const tasks = await this.taskRepository.find({
+      where: { parentTaskId: parentTaskId, userId: userId }
+    });
+    return tasks.map(t => this.toResponseDto(t));
   }
 
   async getTaskStatistics(userId: string): Promise<{
@@ -178,21 +223,29 @@ export class TaskService {
     cancelled: number;
     overdue: number;
   }> {
-    const userTasks = this.tasks.filter(t => t.userId === userId);
     const now = new Date();
     
+    const [total, pending, inProgress, completed, cancelled, overdue] = await Promise.all([
+      this.taskRepository.count({ where: { userId } }),
+      this.taskRepository.count({ where: { userId, status: 'pending' } }),
+      this.taskRepository.count({ where: { userId, status: 'in_progress' } }),
+      this.taskRepository.count({ where: { userId, status: 'completed' } }),
+      this.taskRepository.count({ where: { userId, status: 'cancelled' } }),
+      this.taskRepository
+        .createQueryBuilder('task')
+        .where('task.userId = :userId', { userId })
+        .andWhere('task.dueDate < :now', { now })
+        .andWhere('task.status NOT IN (:...statuses)', { statuses: ['completed', 'cancelled'] })
+        .getCount()
+    ]);
+    
     return {
-      total: userTasks.length,
-      pending: userTasks.filter(t => t.status === 'pending').length,
-      inProgress: userTasks.filter(t => t.status === 'in_progress').length,
-      completed: userTasks.filter(t => t.status === 'completed').length,
-      cancelled: userTasks.filter(t => t.status === 'cancelled').length,
-      overdue: userTasks.filter(t => 
-        t.dueDate && 
-        t.dueDate < now && 
-        t.status !== 'completed' && 
-        t.status !== 'cancelled'
-      ).length,
+      total,
+      pending,
+      inProgress,
+      completed,
+      cancelled,
+      overdue,
     };
   }
 
@@ -491,7 +544,7 @@ export class TaskService {
   private toResponseDto(task: Task): TaskResponseDto {
     return {
       id: task.id,
-      title: task.title,
+      title: task.title || task.description, // 使用标题，如果没有标题则使用描述
       description: task.description,
       priority: task.priority,
       status: task.status,
@@ -504,6 +557,8 @@ export class TaskService {
       tags: task.tags,
       aiGenerated: task.aiGenerated,
       aiContext: task.aiContext,
+      isRecurring: task.isRecurring || false,
+      recurrencePattern: task.recurrencePattern,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       completedAt: task.completedAt,
@@ -515,7 +570,10 @@ export class TaskService {
   }
 
   async getProjectsSummary(userId: string): Promise<any[]> {
-    const userTasks = this.tasks.filter(task => task.userId === userId);
+    const userTasks = await this.taskRepository.find({
+      where: { userId },
+      order: { createdAt: 'DESC' }
+    });
     
     // 按项目分组任务
     const projectsMap = new Map();

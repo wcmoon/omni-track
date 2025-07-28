@@ -99,6 +99,15 @@ export class TaskResponseDto {
   tags?: string[];
   aiGenerated: boolean;
   aiContext?: string;
+  isRecurring?: boolean;
+  recurrencePattern?: {
+    type: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    interval: number;
+    daysOfWeek?: number[];
+    dayOfMonth?: number;
+    endDate?: Date;
+    occurrences?: number;
+  };
   createdAt: Date;
   updatedAt: Date;
   completedAt?: Date;
