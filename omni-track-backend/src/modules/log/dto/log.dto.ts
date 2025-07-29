@@ -52,10 +52,9 @@ export class CreateLogEntryDto {
 
 export class UpdateLogEntryDto {
   @IsOptional()
-  @IsEnum(['work', 'personal', 'health', 'learning', 'childcare', 'finance', 'exercise', 'social'], { 
-    message: '日志类型必须是 work、personal、health、learning、childcare、finance、exercise 或 social' 
-  })
-  type?: 'work' | 'personal' | 'health' | 'learning' | 'childcare' | 'finance' | 'exercise' | 'social';
+  @IsString({ message: '日志类型必须是字符串' })
+  @MaxLength(50, { message: '日志类型不能超过50个字符' })
+  type?: string;
 
   @IsOptional()
   @IsString({ message: '日志内容必须是字符串' })

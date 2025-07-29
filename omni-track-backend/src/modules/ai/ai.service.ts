@@ -462,15 +462,123 @@ export class AIService {
       };
     } catch (error) {
       console.error('AI分析失败:', error);
-      // 返回默认值
+      // 使用关键词备选方案
+      const fallbackResult = this.analyzeLabelsByKeywords(content);
       return {
-        suggestedType: '日常',
-        suggestedTags: [],
-        sentiment: 'neutral',
-        keyPoints: [],
+        suggestedType: fallbackResult.suggestedType,
+        suggestedTags: fallbackResult.suggestedTags,
+        sentiment: fallbackResult.sentiment,
+        keyPoints: fallbackResult.keyPoints,
         summary: content,
       };
     }
+  }
+
+  // 添加基于关键词的日志标签分析方法（备选方案）
+  public analyzeLabelsByKeywords(content: string): {
+    suggestedType: string;
+    suggestedTags: string[];
+    sentiment: 'positive' | 'negative' | 'neutral';
+    keyPoints: string[];
+  } {
+    const text = content.toLowerCase();
+    const tags: string[] = [];
+    let suggestedType = '日常';
+    let sentiment: 'positive' | 'negative' | 'neutral' = 'neutral';
+    const keyPoints: string[] = [];
+
+    // 工作相关关键词
+    const workKeywords = ['工作', '项目', '会议', '开发', '编程', '代码', '任务', '报告', '文档', '客户', '同事', '老板', '公司', '办公', '加班'];
+    if (workKeywords.some(keyword => text.includes(keyword))) {
+      suggestedType = '工作';
+      tags.push('工作');
+      if (text.includes('会议')) tags.push('会议');
+      if (text.includes('开发') || text.includes('编程') || text.includes('代码')) tags.push('编程');
+      if (text.includes('项目')) tags.push('项目');
+      if (text.includes('加班')) tags.push('加班');
+    }
+
+    // 学习相关关键词
+    const learningKeywords = ['学习', '阅读', '读书', '课程', '教程', '研究', '笔记', '知识', '技能', '培训', '考试', '复习'];
+    if (learningKeywords.some(keyword => text.includes(keyword))) {
+      if (suggestedType === '日常') suggestedType = '学习';
+      tags.push('学习');
+      if (text.includes('阅读') || text.includes('读书')) tags.push('阅读');
+      if (text.includes('课程') || text.includes('培训')) tags.push('课程');
+      if (text.includes('考试') || text.includes('复习')) tags.push('考试');
+    }
+
+    // 健康相关关键词
+    const healthKeywords = ['运动', '健身', '跑步', '游泳', '瑜伽', '锻炼', '医院', '看病', '体检', '健康', '饮食', '营养', '睡眠'];
+    if (healthKeywords.some(keyword => text.includes(keyword))) {
+      if (suggestedType === '日常') suggestedType = '健康';
+      tags.push('健康');
+      if (text.includes('运动') || text.includes('健身') || text.includes('跑步')) tags.push('运动');
+      if (text.includes('饮食') || text.includes('营养')) tags.push('饮食');
+      if (text.includes('睡眠')) tags.push('睡眠');
+    }
+
+    // 娱乐相关关键词
+    const entertainmentKeywords = ['电影', '音乐', '游戏', '娱乐', '休闲', '旅游', '出行', '聚会', '朋友', '家人', '逛街', '购物'];
+    if (entertainmentKeywords.some(keyword => text.includes(keyword))) {
+      if (suggestedType === '日常') suggestedType = '娱乐';
+      tags.push('娱乐');
+      if (text.includes('电影')) tags.push('电影');
+      if (text.includes('音乐')) tags.push('音乐');
+      if (text.includes('游戏')) tags.push('游戏');
+      if (text.includes('旅游') || text.includes('出行')) tags.push('出行');
+      if (text.includes('朋友') || text.includes('聚会')) tags.push('社交');
+    }
+
+    // 生活相关关键词
+    const lifeKeywords = ['家务', '做饭', '购物', '清洁', '整理', '洗衣', '维修', '搬家', '装修'];
+    if (lifeKeywords.some(keyword => text.includes(keyword))) {
+      if (suggestedType === '日常') suggestedType = '生活';
+      tags.push('生活');
+      if (text.includes('做饭')) tags.push('做饭');
+      if (text.includes('购物')) tags.push('购物');
+      if (text.includes('清洁') || text.includes('整理')) tags.push('整理');
+    }
+
+    // 情感分析
+    const positiveKeywords = ['开心', '高兴', '快乐', '满意', '成功', '完成', '顺利', '好', '棒', '赞', '爱', '幸福', '兴奋'];
+    const negativeKeywords = ['难过', '失望', '沮丧', '焦虑', '压力', '累', '疲惫', '烦躁', '生气', '痛苦', '困难', '失败', '问题'];
+    
+    if (positiveKeywords.some(keyword => text.includes(keyword))) {
+      sentiment = 'positive';
+      tags.push('心情好');
+    } else if (negativeKeywords.some(keyword => text.includes(keyword))) {
+      sentiment = 'negative';
+      tags.push('压力');
+      if (text.includes('累') || text.includes('疲惫')) tags.push('疲惫');
+    }
+
+    // 时间相关标签
+    const now = new Date();
+    const hour = now.getHours();
+    if (hour >= 6 && hour < 12) {
+      tags.push('上午');
+    } else if (hour >= 12 && hour < 18) {
+      tags.push('下午');
+    } else if (hour >= 18 && hour < 22) {
+      tags.push('晚上');
+    } else {
+      tags.push('深夜');
+    }
+
+    // 提取关键要点（简化版）
+    const sentences = content.split(/[。！？.!?]/).filter(s => s.trim().length > 0);
+    keyPoints.push(...sentences.slice(0, 3).map(s => s.trim()));
+
+    // 去重并限制标签数量
+    const uniqueTags = [...new Set(tags)].slice(0, 5);
+
+    return {
+      suggestedType,
+      suggestedTags: uniqueTags,
+      sentiment,
+      keyPoints,
+    };
   }
 
   async generateProjectInsights(tasks: any[]): Promise<{

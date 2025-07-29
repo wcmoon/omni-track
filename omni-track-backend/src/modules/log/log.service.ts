@@ -49,7 +49,12 @@ export class LogService {
     
     // 按类型过滤
     if (options?.type) {
-      query.andWhere('log.type = :type', { type: options.type });
+      const types = options.type.split(',').map(t => t.trim()).filter(t => t.length > 0);
+      if (types.length === 1) {
+        query.andWhere('log.type = :type', { type: types[0] });
+      } else if (types.length > 1) {
+        query.andWhere('log.type IN (:...types)', { types });
+      }
     }
 
     // 按项目过滤
@@ -185,32 +190,80 @@ export class LogService {
   }
 
   async createSmartLog(smartLogDto: SmartLogDto, userId: string): Promise<LogEntryResponseDto> {
-    // AI分析日志内容
-    const analysis = await this.aiService.analyzeLogContent(smartLogDto.content);
+    // 使用关键词快速分析，先创建日志
+    const fallbackAnalysis = this.aiService.analyzeLabelsByKeywords(smartLogDto.content);
     
     const logEntry = this.logRepository.create({
-      type: analysis.suggestedType || smartLogDto.type || '日常',
+      type: fallbackAnalysis.suggestedType || smartLogDto.type || '日常',
       content: smartLogDto.content,
-      tags: [...(smartLogDto.tags || []), ...(analysis.suggestedTags || [])],
+      tags: [...(smartLogDto.tags || []), ...fallbackAnalysis.suggestedTags],
       mood: smartLogDto.mood,
       energy: smartLogDto.energy,
       location: smartLogDto.location,
       weather: smartLogDto.weather,
-      sentiment: analysis.sentiment,
-      categories: analysis.keyPoints,
+      sentiment: fallbackAnalysis.sentiment,
+      categories: fallbackAnalysis.keyPoints,
       userId,
       projectId: smartLogDto.projectId,
       relatedTaskId: smartLogDto.relatedTaskId,
-      aiEnhanced: true,
-      aiSuggestions: [{
-        type: 'analysis',
-        data: analysis,
-        timestamp: new Date(),
-      }],
+      aiEnhanced: false, // 初始为false，AI分析完成后更新为true
+      aiSuggestions: [],
     });
 
     const savedLogEntry = await this.logRepository.save(logEntry);
+    
+    // 异步进行AI分析（不阻塞返回）
+    this.performAsyncLogAnalysis(savedLogEntry.id, smartLogDto.content, userId);
+    
     return this.toResponseDto(savedLogEntry);
+  }
+
+  private async performAsyncLogAnalysis(logId: string, content: string, userId: string): Promise<void> {
+    try {
+      console.log(`🤖 开始异步AI分析日志: ${logId}`);
+      const analysis = await this.aiService.analyzeLogContent(content);
+      
+      // 查找日志并更新AI分析结果
+      const log = await this.logRepository.findOne({
+        where: { id: logId, userId }
+      });
+      
+      if (log) {
+        // 合并标签并去重
+        const mergedTags = [...new Set([...(log.tags || []), ...(analysis.suggestedTags || [])])];
+        
+        // 将AI建议的标签加入到type分类系统中
+        // 优先使用analysis.suggestedType，然后将有价值的标签合并
+        let finalType = analysis.suggestedType || log.type;
+        
+        // 如果AI建议的标签中有更具体的分类，且不是通用词汇，则使用它作为type
+        const specificTags = analysis.suggestedTags?.filter(tag => 
+          tag && tag.length >= 2 && !['其他', '日常', '记录'].includes(tag)
+        ) || [];
+        
+        // 如果有具体的标签且原type是通用的，使用第一个具体标签
+        if (specificTags.length > 0 && ['日常', '其他'].includes(finalType)) {
+          finalType = specificTags[0];
+        }
+
+        await this.logRepository.update(logId, {
+          type: finalType,
+          tags: mergedTags,
+          sentiment: analysis.sentiment,
+          categories: analysis.keyPoints,
+          aiEnhanced: true,
+          aiSuggestions: [{
+            type: 'analysis',
+            data: analysis,
+            timestamp: new Date(),
+          }] as any,
+        });
+        
+        console.log(`✅ 日志 ${logId} AI分析完成`);
+      }
+    } catch (error) {
+      console.error(`❌ 日志 ${logId} AI分析失败:`, error);
+    }
   }
 
   async searchLogs(userId: string, query: string): Promise<LogEntryResponseDto[]> {
