@@ -40,6 +40,14 @@ export class CreateTaskDto {
   @IsArray({ message: '标签必须是数组' })
   @IsString({ each: true, message: '标签必须是字符串' })
   tags?: string[];
+
+  @IsOptional()
+  @IsBoolean({ message: 'AI生成标记必须是布尔值' })
+  aiGenerated?: boolean;
+
+  @IsOptional()
+  @IsString({ message: 'AI上下文必须是字符串' })
+  aiContext?: string;
 }
 
 export class UpdateTaskDto {

@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import OpenAI from 'openai';
 import { AITaskAnalysisDto } from '../task/dto/smart-task.dto';
+import { UserSubscription, SubscriptionTier, SubscriptionStatus } from '../../database/entities/user-subscription.entity';
 
 export interface SemanticAnalysis {
   entities: Entity[];
@@ -29,11 +32,130 @@ export interface EnhancedContent {
 export class AIService {
   private openai: OpenAI;
 
-  constructor() {
+  constructor(
+    @InjectRepository(UserSubscription)
+    private userSubscriptionRepository: Repository<UserSubscription>,
+  ) {
     this.openai = new OpenAI({
       apiKey: process.env.DASHSCOPE_API_KEY || '',
       baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     });
+  }
+
+  // 获取或创建用户订阅信息
+  private async getUserSubscription(userId: string): Promise<UserSubscription> {
+    console.log('🔍 getUserSubscription called with userId:', userId);
+    
+    let subscription = await this.userSubscriptionRepository.findOne({
+      where: { userId }
+    });
+
+    if (!subscription) {
+      console.log('📝 Creating new subscription for userId:', userId);
+      // 为新用户创建免费订阅
+      subscription = this.userSubscriptionRepository.create({
+        userId: userId, // 明确设置userId
+        tier: SubscriptionTier.FREE,
+        status: SubscriptionStatus.ACTIVE,
+        v3TokensLimit: 50000, // 免费用户V3每月5万Token
+        r1TokensLimit: 10000, // 免费用户R1每月1万Token
+        lastResetAt: new Date(),
+      });
+      console.log('💾 Saving subscription:', subscription);
+      subscription = await this.userSubscriptionRepository.save(subscription);
+      console.log('✅ Subscription saved:', subscription.id);
+    }
+
+    // 检查是否需要重置月度使用量
+    const now = new Date();
+    const lastReset = subscription.lastResetAt || subscription.createdAt;
+    const daysSinceReset = Math.floor((now.getTime() - lastReset.getTime()) / (1000 * 60 * 60 * 24));
+    
+    if (daysSinceReset >= 30) {
+      subscription.v3TokensUsed = 0;
+      subscription.r1TokensUsed = 0;
+      subscription.totalCost = 0;
+      subscription.lastResetAt = now;
+      subscription = await this.userSubscriptionRepository.save(subscription);
+    }
+
+    return subscription;
+  }
+
+  // 检查用户是否有足够的Token额度
+  private async checkTokenQuota(userId: string, modelType: 'deepseek-v3' | 'deepseek-r1', estimatedTokens: number): Promise<{
+    allowed: boolean;
+    subscription: UserSubscription;
+    message?: string;
+  }> {
+    const subscription = await this.getUserSubscription(userId);
+    
+    if (subscription.tier === SubscriptionTier.FREE) {
+      const currentUsed = modelType === 'deepseek-v3' ? subscription.v3TokensUsed : subscription.r1TokensUsed;
+      const limit = modelType === 'deepseek-v3' ? subscription.v3TokensLimit : subscription.r1TokensLimit;
+      
+      if (currentUsed + estimatedTokens > limit) {
+        const modelName = modelType === 'deepseek-v3' ? 'DeepSeek V3' : 'DeepSeek R1';
+        return {
+          allowed: false,
+          subscription,
+          message: `${modelName}模型月度额度不足。已使用${currentUsed}/${limit}个Token，本次请求需要约${estimatedTokens}个Token。请升级到付费版本以获得更多额度。`
+        };
+      }
+    }
+    
+    return { allowed: true, subscription };
+  }
+
+  // 记录Token使用量和成本
+  private async recordTokenUsage(subscription: UserSubscription, modelType: 'deepseek-v3' | 'deepseek-r1', inputTokens: number, outputTokens: number): Promise<void> {
+    const totalTokens = inputTokens + outputTokens;
+    
+    // 计算成本（人民币）
+    let cost = 0;
+    if (modelType === 'deepseek-v3') {
+      cost = (inputTokens * 0.002 + outputTokens * 0.008) / 1000; // V3价格
+      subscription.v3TokensUsed += totalTokens;
+    } else {
+      cost = (inputTokens * 0.004 + outputTokens * 0.016) / 1000; // R1价格  
+      subscription.r1TokensUsed += totalTokens;
+    }
+    
+    subscription.totalCost = Number(subscription.totalCost) + cost;
+    await this.userSubscriptionRepository.save(subscription);
+    
+    console.log(`💰 Token使用记录: 用户${subscription.userId}, 模型${modelType}, 输入${inputTokens}, 输出${outputTokens}, 成本¥${cost.toFixed(4)}`);
+  }
+
+  // 估算Token数量（简单估算）
+  private estimateTokens(text: string): number {
+    // 中文大约1个字符 = 1.5个Token，英文大约4个字符 = 1个Token
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const otherChars = text.length - chineseChars;
+    return Math.ceil(chineseChars * 1.5 + otherChars / 4);
+  }
+
+  // 获取用户订阅状态（对外API）
+  async getUserSubscriptionStatus(userId: string) {
+    const subscription = await this.getUserSubscription(userId);
+    
+    return {
+      tier: subscription.tier,
+      status: subscription.status,
+      v3TokensUsed: subscription.v3TokensUsed,
+      v3TokensLimit: subscription.v3TokensLimit,
+      r1TokensUsed: subscription.r1TokensUsed,
+      r1TokensLimit: subscription.r1TokensLimit,
+      totalCost: Number(subscription.totalCost),
+      validUntil: subscription.validUntil,
+      lastResetAt: subscription.lastResetAt,
+      // 计算剩余额度
+      v3TokensRemaining: subscription.v3TokensLimit - subscription.v3TokensUsed,
+      r1TokensRemaining: subscription.r1TokensLimit - subscription.r1TokensUsed,
+      // 使用率
+      v3UsagePercentage: Math.round((subscription.v3TokensUsed / subscription.v3TokensLimit) * 100),
+      r1UsagePercentage: Math.round((subscription.r1TokensUsed / subscription.r1TokensLimit) * 100),
+    };
   }
 
   async analyzeTaskDescription(description: string): Promise<AITaskAnalysisDto> {
@@ -581,6 +703,278 @@ export class AIService {
     };
   }
 
+  // 任务分析和拆分功能
+  async analyzeAndBreakdownTask(taskDescription: string, userId: string, modelType: 'deepseek-v3' | 'deepseek-r1' = 'deepseek-v3'): Promise<{
+    analysis: string;
+    subtasks: Array<{
+      title: string;
+      description: string;
+      estimatedTime: number;
+      priority: 'low' | 'medium' | 'high';
+      dependencies?: number[]; // 依赖的子任务索引
+    }>;
+    suggestions: string[];
+  }> {
+    try {
+      // 估算Token使用量
+      const estimatedTokens = this.estimateTokens(taskDescription) + 1500; // 加上prompt和响应的估算
+      
+      // 检查用户额度
+      const quotaCheck = await this.checkTokenQuota(userId, modelType, estimatedTokens);
+      if (!quotaCheck.allowed) {
+        throw new Error(quotaCheck.message);
+      }
+
+      const prompt = `请分析以下任务并将其拆分成可执行的小任务：
+
+任务描述："${taskDescription}"
+
+请返回JSON格式的分析结果：
+{
+  "analysis": "对任务的整体分析，包括复杂度、所需技能、潜在挑战等",
+  "subtasks": [
+    {
+      "title": "子任务标题",
+      "description": "详细描述该子任务需要做什么",
+      "estimatedTime": 预估时间(分钟),
+      "priority": "优先级(low/medium/high)",
+      "dependencies": [依赖的其他子任务的索引数组，可选]
+    }
+  ],
+  "suggestions": ["实施建议1", "实施建议2", "注意事项等"]
+}
+
+要求：
+1. 子任务应该具体明确，可独立执行
+2. 合理估算每个子任务的时间
+3. 按逻辑顺序排列子任务
+4. 提供实用的执行建议
+5. 所有文本使用中文`;
+
+      // 选择模型
+      const modelName = modelType === 'deepseek-r1' ? 'deepseek-r1-0528' : 'deepseek-v3';
+      
+      // 添加超时控制
+      const timeout = 30000; // 30秒超时
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      console.log(`🚀 开始AI任务分析，使用模型: ${modelName}`);
+      const apiStartTime = Date.now();
+      
+      try {
+        const response = await this.openai.chat.completions.create({
+          model: modelName,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.7,
+          max_tokens: 2000,
+        }, {
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+        console.log(`✅ AI任务分析完成，耗时: ${Date.now() - apiStartTime}ms`);
+        
+        const content = response.choices[0]?.message?.content || '';
+        console.log('🤖 AI原始响应内容:', content);
+        console.log('📏 响应内容长度:', content.length);
+        
+        // 记录实际Token使用量
+        const usage = response.usage;
+        if (usage) {
+          console.log('📊 Token使用情况:', usage);
+          await this.recordTokenUsage(
+            quotaCheck.subscription,
+            modelType,
+            usage.prompt_tokens || 0,
+            usage.completion_tokens || 0
+          );
+        }
+        
+        try {
+          console.log('🔍 尝试解析JSON...');
+          const result = JSON.parse(content);
+          console.log('✅ JSON解析成功:', result);
+          return {
+            analysis: result.analysis || '任务分析完成',
+            subtasks: (result.subtasks || []).map((task: any, index: number) => ({
+              title: task.title || `子任务 ${index + 1}`,
+              description: task.description || task.title || '待补充描述',
+              estimatedTime: Math.max(15, task.estimatedTime || 30), // 最少15分钟
+              priority: ['low', 'medium', 'high'].includes(task.priority) ? task.priority : 'medium',
+              dependencies: Array.isArray(task.dependencies) ? task.dependencies : []
+            })),
+            suggestions: Array.isArray(result.suggestions) ? result.suggestions : []
+          };
+        } catch (parseError) {
+          console.error('❌ 解析AI响应失败:', parseError);
+          console.error('🔍 无法解析的内容:', content);
+          console.error('📝 尝试提取JSON...');
+          
+          // 尝试从内容中提取JSON
+          let jsonContent = content.trim();
+          const jsonStart = jsonContent.indexOf('{');
+          const jsonEnd = jsonContent.lastIndexOf('}');
+          
+          if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+            const extractedJson = jsonContent.substring(jsonStart, jsonEnd + 1);
+            console.log('🔧 提取的JSON内容:', extractedJson);
+            
+            try {
+              const result = JSON.parse(extractedJson);
+              console.log('✅ 提取JSON解析成功:', result);
+              return {
+                analysis: result.analysis || '任务分析完成',
+                subtasks: (result.subtasks || []).map((task: any, index: number) => ({
+                  title: task.title || `子任务 ${index + 1}`,
+                  description: task.description || task.title || '待补充描述',
+                  estimatedTime: Math.max(15, task.estimatedTime || 30),
+                  priority: ['low', 'medium', 'high'].includes(task.priority) ? task.priority : 'medium',
+                  dependencies: Array.isArray(task.dependencies) ? task.dependencies : []
+                })),
+                suggestions: Array.isArray(result.suggestions) ? result.suggestions : []
+              };
+            } catch (extractError) {
+              console.error('❌ 提取JSON也解析失败:', extractError);
+            }
+          }
+          
+          console.log('🔄 使用fallback方案');
+          // 返回简化的拆分结果
+          return this.generateSimpleTaskBreakdown(taskDescription);
+        }
+      } catch (apiError) {
+        clearTimeout(timeoutId);
+        if (apiError.name === 'AbortError') {
+          console.log('⏰ AI任务分析超时');
+          throw new Error('AI分析请求超时，请稍后重试');
+        } else {
+          console.error('🔥 AI任务分析失败:', apiError);
+          throw apiError;
+        }
+      }
+    } catch (error) {
+      console.error('任务分析失败:', error);
+      return this.generateSimpleTaskBreakdown(taskDescription);
+    }
+  }
+
+  // 简化的任务拆分备选方案
+  private generateSimpleTaskBreakdown(taskDescription: string): {
+    analysis: string;
+    subtasks: Array<{
+      title: string;
+      description: string;
+      estimatedTime: number;
+      priority: 'low' | 'medium' | 'high';
+      dependencies?: number[];
+    }>;
+    suggestions: string[];
+  } {
+    const desc = taskDescription.toLowerCase();
+    const subtasks = [];
+
+    // 基于关键词的简单拆分逻辑
+    if (desc.includes('开发') || desc.includes('编程') || desc.includes('代码')) {
+      subtasks.push(
+        { title: '需求分析', description: '明确功能需求和技术规格', estimatedTime: 60, priority: 'high' as const },
+        { title: '技术设计', description: '设计技术架构和实现方案', estimatedTime: 90, priority: 'high' as const },
+        { title: '编码实现', description: '具体代码实现', estimatedTime: 180, priority: 'medium' as const },
+        { title: '测试验证', description: '功能测试和bug修复', estimatedTime: 60, priority: 'medium' as const }
+      );
+    } else if (desc.includes('学习') || desc.includes('研究')) {
+      subtasks.push(
+        { title: '资料收集', description: '搜集相关学习资料和资源', estimatedTime: 45, priority: 'high' as const },
+        { title: '基础学习', description: '学习基础概念和理论', estimatedTime: 120, priority: 'high' as const },
+        { title: '实践练习', description: '通过练习巩固知识', estimatedTime: 90, priority: 'medium' as const },
+        { title: '总结回顾', description: '整理笔记和知识点总结', estimatedTime: 30, priority: 'low' as const }
+      );
+    } else {
+      // 通用拆分
+      subtasks.push(
+        { title: '任务准备', description: '收集必要资源和信息', estimatedTime: 30, priority: 'high' as const },
+        { title: '执行主要工作', description: taskDescription, estimatedTime: 60, priority: 'high' as const },
+        { title: '检查和完善', description: '检查结果并进行必要的调整', estimatedTime: 30, priority: 'medium' as const }
+      );
+    }
+
+    return {
+      analysis: `已将任务"${taskDescription}"拆分成${subtasks.length}个子任务，建议按顺序执行。`,
+      subtasks,
+      suggestions: [
+        '建议预留额外时间应对意外情况',
+        '可以根据实际情况调整任务优先级',
+        '完成每个子任务后及时记录进度'
+      ]
+    };
+  }
+
+  // 简单聊天方法 - 直接调用模型API
+  async simpleChat(message: string, userId: string, modelType: 'deepseek-v3' | 'deepseek-r1' = 'deepseek-v3'): Promise<string> {
+    try {
+      // 估算Token使用量
+      const estimatedTokens = this.estimateTokens(message) + 500; // 加上响应的估算
+      
+      // 检查用户额度
+      const quotaCheck = await this.checkTokenQuota(userId, modelType, estimatedTokens);
+      if (!quotaCheck.allowed) {
+        throw new Error(quotaCheck.message);
+      }
+
+      // 选择模型
+      const modelName = modelType === 'deepseek-r1' ? 'deepseek-r1-0528' : 'deepseek-v3';
+      
+      // 添加超时控制
+      const timeout = 30000; // 30秒超时
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      console.log(`🚀 开始简单聊天，使用模型: ${modelName}`);
+      const apiStartTime = Date.now();
+      
+      try {
+        const response = await this.openai.chat.completions.create({
+          model: modelName,
+          messages: [{ role: 'user', content: message }],
+          temperature: 0.7,
+          max_tokens: 1000,
+        }, {
+          signal: controller.signal,
+        });
+        
+        clearTimeout(timeoutId);
+        console.log(`✅ 简单聊天完成，耗时: ${Date.now() - apiStartTime}ms`);
+        
+        const content = response.choices[0]?.message?.content || '抱歉，我无法理解您的问题。';
+        
+        // 记录实际Token使用量
+        const usage = response.usage;
+        if (usage) {
+          await this.recordTokenUsage(
+            quotaCheck.subscription,
+            modelType,
+            usage.prompt_tokens || 0,
+            usage.completion_tokens || 0
+          );
+        }
+        
+        return content;
+      } catch (apiError) {
+        clearTimeout(timeoutId);
+        if (apiError.name === 'AbortError') {
+          console.log('⏰ 简单聊天超时');
+          throw new Error('聊天请求超时，请稍后重试');
+        } else {
+          console.error('🔥 简单聊天失败:', apiError);
+          throw apiError;
+        }
+      }
+    } catch (error) {
+      console.error('简单聊天失败:', error);
+      throw error;
+    }
+  }
+
   async generateProjectInsights(tasks: any[]): Promise<{
     suggestions: string[];
     warnings: string[];
@@ -759,6 +1153,208 @@ ${context ? `上下文：${context}` : ''}
       console.error('智能问答失败:', error);
       // 返回默认回答作为备用
       return '抱歉，我现在无法回答这个问题。请稍后再试。';
+    }
+  }
+
+  /**
+   * 流式任务分析和拆分功能
+   */
+  async *streamTaskBreakdown(taskDescription: string, userId: string, modelType: 'deepseek-v3' | 'deepseek-r1' = 'deepseek-v3'): AsyncGenerator<{
+    type: 'chunk' | 'complete' | 'error';
+    content?: string;
+    data?: any;
+    error?: string;
+  }> {
+    try {
+      // 估算Token使用量
+      const estimatedTokens = this.estimateTokens(taskDescription) + 1500;
+      
+      // 检查用户额度
+      const quotaCheck = await this.checkTokenQuota(userId, modelType, estimatedTokens);
+      if (!quotaCheck.allowed) {
+        yield { type: 'error', error: quotaCheck.message };
+        return;
+      }
+
+      const prompt = `请分析以下任务并将其拆分成可执行的小任务：
+
+任务描述："${taskDescription}"
+
+请返回JSON格式的分析结果：
+{
+  "analysis": "对任务的整体分析，包括复杂度、所需技能、潜在挑战等",
+  "subtasks": [
+    {
+      "title": "子任务标题",
+      "description": "详细描述该子任务需要做什么",
+      "estimatedTime": 预估时间(分钟),
+      "priority": "优先级(low/medium/high)",
+      "dependencies": [依赖的其他子任务的索引数组，可选]
+    }
+  ],
+  "suggestions": ["实施建议1", "实施建议2", "注意事项等"]
+}
+
+要求：
+1. 子任务应该具体明确，可独立执行
+2. 合理估算每个子任务的时间
+3. 按逻辑顺序排列子任务
+4. 提供实用的执行建议
+5. 所有文本使用中文`;
+
+      // 选择模型
+      const modelName = modelType === 'deepseek-r1' ? 'deepseek-r1-0528' : 'deepseek-v3';
+      
+      console.log(`🚀 开始流式AI任务分析，使用模型: ${modelName}`);
+      const apiStartTime = Date.now();
+      
+      const stream = await this.openai.chat.completions.create({
+        model: modelName,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 2000,
+        stream: true, // 启用流式响应
+      });
+      
+      let fullContent = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
+      
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          fullContent += content;
+          outputTokens += this.estimateTokens(content);
+          
+          // 实时发送内容块
+          yield {
+            type: 'chunk',
+            content: content
+          };
+        }
+      }
+      
+      console.log(`✅ 流式AI任务分析完成，耗时: ${Date.now() - apiStartTime}ms`);
+      
+      // 记录Token使用量
+      inputTokens = this.estimateTokens(prompt);
+      await this.recordTokenUsage(quotaCheck.subscription, modelType, inputTokens, outputTokens);
+      
+      // 尝试解析完整内容
+      try {
+        console.log('🔍 尝试解析完整JSON...');
+        let jsonContent = fullContent.trim();
+        const jsonStart = jsonContent.indexOf('{');
+        const jsonEnd = jsonContent.lastIndexOf('}');
+        
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+          const extractedJson = jsonContent.substring(jsonStart, jsonEnd + 1);
+          const result = JSON.parse(extractedJson);
+          
+          const processedResult = {
+            analysis: result.analysis || '任务分析完成',
+            subtasks: (result.subtasks || []).map((task: any, index: number) => ({
+              title: task.title || `子任务 ${index + 1}`,
+              description: task.description || task.title || '待补充描述',
+              estimatedTime: Math.max(15, task.estimatedTime || 30),
+              priority: ['low', 'medium', 'high'].includes(task.priority) ? task.priority : 'medium',
+              dependencies: Array.isArray(task.dependencies) ? task.dependencies : []
+            })),
+            suggestions: Array.isArray(result.suggestions) ? result.suggestions : []
+          };
+          
+          yield {
+            type: 'complete',
+            data: processedResult
+          };
+        } else {
+          throw new Error('无法提取有效JSON');
+        }
+      } catch (parseError) {
+        console.error('❌ 解析流式响应失败:', parseError);
+        // 使用fallback方案
+        const fallbackResult = this.generateSimpleTaskBreakdown(taskDescription);
+        yield {
+          type: 'complete',
+          data: fallbackResult
+        };
+      }
+    } catch (error) {
+      console.error('流式任务分析失败:', error);
+      yield {
+        type: 'error',
+        error: error.message || '任务分析失败'
+      };
+    }
+  }
+
+  /**
+   * 流式简单聊天功能
+   */
+  async *streamSimpleChat(message: string, userId: string, modelType: 'deepseek-v3' | 'deepseek-r1' = 'deepseek-v3'): AsyncGenerator<{
+    type: 'chunk' | 'complete' | 'error';
+    content?: string;
+    error?: string;
+  }> {
+    try {
+      // 估算Token使用量
+      const estimatedTokens = this.estimateTokens(message) + 500;
+      
+      // 检查用户额度
+      const quotaCheck = await this.checkTokenQuota(userId, modelType, estimatedTokens);
+      if (!quotaCheck.allowed) {
+        yield { type: 'error', error: quotaCheck.message };
+        return;
+      }
+
+      // 选择模型
+      const modelName = modelType === 'deepseek-r1' ? 'deepseek-r1-0528' : 'deepseek-v3';
+      
+      console.log(`🚀 开始流式简单聊天，使用模型: ${modelName}`);
+      const apiStartTime = Date.now();
+      
+      const stream = await this.openai.chat.completions.create({
+        model: modelName,
+        messages: [{ role: 'user', content: message }],
+        temperature: 0.7,
+        max_tokens: 1000,
+        stream: true, // 启用流式响应
+      });
+      
+      let fullContent = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
+      
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          fullContent += content;
+          outputTokens += this.estimateTokens(content);
+          
+          // 实时发送内容块
+          yield {
+            type: 'chunk',
+            content: content
+          };
+        }
+      }
+      
+      console.log(`✅ 流式简单聊天完成，耗时: ${Date.now() - apiStartTime}ms`);
+      
+      // 记录Token使用量
+      inputTokens = this.estimateTokens(message);
+      await this.recordTokenUsage(quotaCheck.subscription, modelType, inputTokens, outputTokens);
+      
+      yield {
+        type: 'complete',
+        content: fullContent
+      };
+    } catch (error) {
+      console.error('流式简单聊天失败:', error);
+      yield {
+        type: 'error',
+        error: error.message || '聊天失败'
+      };
     }
   }
 }

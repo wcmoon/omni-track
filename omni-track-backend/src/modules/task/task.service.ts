@@ -32,7 +32,8 @@ export class TaskService {
       userId,
       parentTaskId: createTaskDto.parentTaskId,
       tags: createTaskDto.tags || [],
-      aiGenerated: false,
+      aiGenerated: createTaskDto.aiGenerated || false,
+      aiContext: createTaskDto.aiContext,
     };
     
     const task = this.taskRepository.create(taskData);
@@ -41,9 +42,12 @@ export class TaskService {
     // 发送任务创建通知
     this.wsGateway.notifyTaskCreated(userId, savedTask.id);
     
-    // 异步AI分析（不阻塞返回，且只对未完成任务进行）
-    if (savedTask.status !== 'completed') {
+    // 异步AI分析（不阻塞返回，且只对未完成且非AI生成的任务进行）
+    if (savedTask.status !== 'completed' && !savedTask.aiGenerated) {
+      console.log('🧠 启动任务AI分析，任务ID:', savedTask.id);
       this.performAsyncAIAnalysis(savedTask.id, createTaskDto.description, userId);
+    } else if (savedTask.aiGenerated) {
+      console.log('⏭️ 跳过AI生成任务的分析，任务ID:', savedTask.id);
     }
     
     return this.toResponseDto(savedTask);
@@ -68,7 +72,6 @@ export class TaskService {
           priority: analysis.suggestedPriority || task.priority,
           tags: mergedTags,
           aiContext: `AI分析：优先级 ${analysis.suggestedPriority}，预估时间 ${analysis.estimatedTime}分钟`,
-          aiGenerated: true,
         });
         
         console.log(`✅ 任务 ${taskId} AI分析完成`);
@@ -79,7 +82,6 @@ export class TaskService {
           priority: analysis.suggestedPriority,
           tags: mergedTags,
           aiContext: `AI分析：优先级 ${analysis.suggestedPriority}，预估时间 ${analysis.estimatedTime}分钟`,
-          aiGenerated: true,
         });
       } else if (task && task.status === 'completed') {
         console.log(`⚠️ 任务 ${taskId} 已完成，跳过AI分析结果更新`);
