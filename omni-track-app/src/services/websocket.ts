@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_CONFIG } from '../config/api.config';
 
 type MessageHandler = (data: any) => void;
 
@@ -9,7 +10,7 @@ class WebSocketService {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 3000;
   private messageHandlers: Map<string, MessageHandler[]> = new Map();
-  private url: string = 'http://localhost:3001'; // socket.io服务器地址
+  private url: string = API_CONFIG.getWebSocketUrl(); // socket.io服务器地址
   private isConnecting = false; // 防止重复连接
 
   connect() {
