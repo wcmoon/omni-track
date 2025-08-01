@@ -4,6 +4,35 @@
  * 例如: node test-email.js test@example.com
  */
 
+// 尝试加载.env文件
+try {
+  require('dotenv').config();
+  console.log('📄 已加载 .env 文件');
+} catch (e) {
+  // 如果没有dotenv，尝试手动加载
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const envFile = path.join(__dirname, '.env');
+    if (fs.existsSync(envFile)) {
+      const envContent = fs.readFileSync(envFile, 'utf8');
+      envContent.split('\n').forEach(line => {
+        const trimmedLine = line.trim();
+        if (trimmedLine && !trimmedLine.startsWith('#')) {
+          const [key, ...valueParts] = trimmedLine.split('=');
+          const value = valueParts.join('=').trim();
+          if (key && value) {
+            process.env[key.trim()] = value;
+          }
+        }
+      });
+      console.log('📄 手动加载 .env 文件成功');
+    }
+  } catch (err) {
+    console.log('⚠️ 无法加载 .env 文件，使用系统环境变量');
+  }
+}
+
 const Dm20151123 = require('@alicloud/dm20151123');
 const OpenApi = require('@alicloud/openapi-client');
 const Util = require('@alicloud/tea-util');
