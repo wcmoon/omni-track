@@ -13,10 +13,37 @@ async function bootstrap() {
     transform: true,
   }));
 
-  // 启用CORS
+  // 启用CORS - 支持移动应用
   app.enableCors({
-    origin: ['http://localhost:3000', 'http://localhost:8081', 'http://localhost:19006', 'https://api.timeweave.xyz'],
+    origin: (origin, callback) => {
+      // 移动应用通常不发送Origin头，直接允许
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // 允许所有localhost
+      if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+        return callback(null, true);
+      }
+      
+      // 允许特定协议
+      if (origin.startsWith('capacitor://') || 
+          origin.startsWith('ionic://') || 
+          origin.startsWith('file://')) {
+        return callback(null, true);
+      }
+      
+      // 允许生产域名
+      if (origin.includes('timeweave')) {
+        return callback(null, true);
+      }
+      
+      // 其他情况拒绝
+      callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
   });
 
   // 设置全局路径前缀
