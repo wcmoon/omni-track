@@ -20,6 +20,23 @@ export class TaskService {
   ) {}
 
   async create(createTaskDto: CreateTaskDto, userId: string): Promise<TaskResponseDto> {
+    // 处理 tags 字段，确保它是数组或 undefined
+    let tags: string[] | undefined;
+    if (createTaskDto.tags === null || createTaskDto.tags === undefined || createTaskDto.tags === '') {
+      tags = undefined;
+    } else if (Array.isArray(createTaskDto.tags)) {
+      tags = createTaskDto.tags.filter(tag => tag && tag.trim() !== '');
+    } else if (typeof createTaskDto.tags === 'string') {
+      // 如果前端错误地发送了字符串，尝试解析
+      if (createTaskDto.tags.trim() === '') {
+        tags = undefined;
+      } else {
+        tags = [createTaskDto.tags];
+      }
+    } else {
+      tags = undefined;
+    }
+
     const taskData = {
       title: createTaskDto.title,
       description: createTaskDto.description,
@@ -31,7 +48,7 @@ export class TaskService {
       projectId: createTaskDto.projectId,
       userId,
       parentTaskId: createTaskDto.parentTaskId,
-      tags: createTaskDto.tags || [],
+      tags: tags || undefined, // 使用 undefined 而不是空数组
       aiGenerated: createTaskDto.aiGenerated || false,
       aiContext: createTaskDto.aiContext,
     };
@@ -312,7 +329,12 @@ export class TaskService {
       estimatedDuration: smartCreateTaskDto.useSmartSuggestions !== false ? suggestions.estimatedDuration : undefined,
       projectId: smartCreateTaskDto.projectId,
       parentTaskId: undefined,
-      tags: smartCreateTaskDto.useSmartSuggestions !== false ? [...new Set([...(smartCreateTaskDto.tags || []), ...suggestions.tags])] : [],
+      tags: (() => {
+        const filteredTags = smartCreateTaskDto.useSmartSuggestions !== false 
+          ? [...new Set([...(smartCreateTaskDto.tags || []), ...suggestions.tags])].filter(tag => tag && tag.trim() !== '')
+          : (smartCreateTaskDto.tags || []).filter(tag => tag && tag.trim() !== '');
+        return filteredTags.length > 0 ? filteredTags : undefined;
+      })(),
     };
 
     const mainTask = await this.create(taskData, userId);
